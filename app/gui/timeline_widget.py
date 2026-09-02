@@ -465,6 +465,19 @@ class TimelineWidget(QWidget):
         self.spn_end_sec.setVisible(False)
         self.insp_layout.addWidget(self.spn_end_sec)
 
+        # Photoshop-style Keyframe Animation Buttons
+        self.btn_kf_start = QPushButton("📍 Fijar Clave Inicio", self.inspector_group)
+        self.btn_kf_start.setToolTip("Fija la posición y tamaño actuales como punto de inicio de animación (Keyframe Start)")
+        self.btn_kf_start.clicked.connect(self._on_set_kf_start)
+        self.btn_kf_start.setVisible(False)
+        self.insp_layout.addWidget(self.btn_kf_start)
+
+        self.btn_kf_end = QPushButton("🏁 Fijar Clave Fin", self.inspector_group)
+        self.btn_kf_end.setToolTip("Fija la posición y tamaño actuales como punto final de animación (Keyframe End)")
+        self.btn_kf_end.clicked.connect(self._on_set_kf_end)
+        self.btn_kf_end.setVisible(False)
+        self.insp_layout.addWidget(self.btn_kf_end)
+
         layout.addWidget(self.inspector_group)
 
     def set_duration(self, duration: float):
@@ -531,6 +544,30 @@ class TimelineWidget(QWidget):
             self.spn_block_speed.blockSignals(False)
             self.lbl_insp_info.setText(f"Intervalo de Velocidad [{interval.start_sec:.2f}s - {interval.end_sec:.2f}s]")
 
+    def _on_set_kf_start(self):
+        sel = self.canvas.selected_text_clip or self.canvas.selected_image_clip or self.canvas.selected_video_clip
+        if sel:
+            sel.enable_keyframes = True
+            sel.start_x_ratio = sel.x_ratio
+            sel.start_y_ratio = sel.y_ratio
+            sel.start_width_ratio = getattr(sel, 'width_ratio', 0.3)
+            sel.start_height_ratio = getattr(sel, 'height_ratio', 0.3)
+            sel.start_font_size = getattr(sel, 'font_size', 40)
+            self.lbl_insp_info.setText("📍 Clave de Inicio Guardada (Keyframe Start)")
+            self.timeline_updated.emit()
+
+    def _on_set_kf_end(self):
+        sel = self.canvas.selected_text_clip or self.canvas.selected_image_clip or self.canvas.selected_video_clip
+        if sel:
+            sel.enable_keyframes = True
+            sel.end_x_ratio = sel.x_ratio
+            sel.end_y_ratio = sel.y_ratio
+            sel.end_width_ratio = getattr(sel, 'width_ratio', 0.3)
+            sel.end_height_ratio = getattr(sel, 'height_ratio', 0.3)
+            sel.end_font_size = getattr(sel, 'font_size', 40)
+            self.lbl_insp_info.setText("🏁 Clave de Fin Guardada (Keyframe End)")
+            self.timeline_updated.emit()
+
     def _on_text_clip_selected(self, t_clip: TimelineTextClip):
         self.canvas.selected_text_clip = t_clip
         self.canvas.selected_image_clip = None
@@ -541,6 +578,8 @@ class TimelineWidget(QWidget):
         self.spn_font_size.setVisible(True)
         self.spn_start_sec.setVisible(True)
         self.spn_end_sec.setVisible(True)
+        self.btn_kf_start.setVisible(True)
+        self.btn_kf_end.setVisible(True)
 
         if t_clip:
             self.txt_clip_content.blockSignals(True)
@@ -571,6 +610,8 @@ class TimelineWidget(QWidget):
         self.spn_font_size.setVisible(False)
         self.spn_start_sec.setVisible(True)
         self.spn_end_sec.setVisible(True)
+        self.btn_kf_start.setVisible(True)
+        self.btn_kf_end.setVisible(True)
 
         if img_clip:
             self.spn_start_sec.blockSignals(True)
@@ -593,6 +634,8 @@ class TimelineWidget(QWidget):
         self.spn_start_sec.setVisible(True)
         self.spn_end_sec.setVisible(True)
         self.spn_block_speed.setVisible(True)
+        self.btn_kf_start.setVisible(True)
+        self.btn_kf_end.setVisible(True)
 
         if v_clip:
             rev_sign = -1.0 if v_clip.reverse else 1.0

@@ -248,6 +248,12 @@ class VideoPreviewWidget(QWidget):
             self.current_sec = self.start_sec
             self.seek_to(self.start_sec)
 
+    def _get_font(self, size: int):
+        try:
+            return ImageFont.truetype(r"C:\Windows\Fonts\arial.ttf", int(size))
+        except Exception:
+            return ImageFont.load_default()
+
     def _render_frame(self, frame_bgr):
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         h, w, ch = frame_rgb.shape
@@ -334,23 +340,31 @@ class VideoPreviewWidget(QWidget):
         # Draw smooth bounding box with corner handles around selected item
         sel = getattr(self, 'selected_item', None) or getattr(self, '_dragged_item', None)
         if sel and hasattr(sel, 'x_ratio') and sel.is_visible_at(self.current_sec):
+            cur_x, cur_y, cur_w, cur_h, cur_fs = sel.get_transform_at(self.current_sec) if hasattr(sel, 'get_transform_at') else (sel.x_ratio, sel.y_ratio, getattr(sel, 'width_ratio', 0.3), getattr(sel, 'height_ratio', 0.3), getattr(sel, 'font_size', 40))
+
             if hasattr(sel, 'width_ratio'):
-                bw = int(w * sel.width_ratio)
-                bh = int(h * sel.height_ratio)
+                bw = max(30, int(w * cur_w))
+                bh = max(30, int(h * cur_h))
             else:
-                bw, bh = 150, 40
+                # Text element auto-fitting box using font metrics
+                font = self._get_font(cur_fs)
+                t_box = draw.textbbox((0, 0), sel.text or "Texto", font=font)
+                bw = max(40, t_box[2] - t_box[0] + 24)
+                bh = max(24, t_box[3] - t_box[1] + 16)
 
-            bx = int((w - bw) * sel.x_ratio)
-            by = int((h - bh) * sel.y_ratio)
+            bx = int((w - bw) * cur_x)
+            by = int((h - bh) * cur_y)
 
-            # Smooth cyan rectangle
-            draw.rectangle([bx, by, bx + bw, by + bh], outline="#89B4FA", width=2)
+            # Smooth cyan rectangle with keyframe indicator glow
+            box_color = "#F5C2E7" if getattr(sel, 'enable_keyframes', False) else "#89B4FA"
+            draw.rectangle([bx, by, bx + bw, by + bh], outline=box_color, width=2)
+
             # Corner handle dots
             r = 6
-            draw.ellipse([bx - r, by - r, bx + r, by + r], fill="#F5E0DC", outline="#89B4FA")
-            draw.ellipse([bx + bw - r, by - r, bx + bw + r, by + r], fill="#F5E0DC", outline="#89B4FA")
-            draw.ellipse([bx - r, by + bh - r, bx + r, by + bh + r], fill="#F5E0DC", outline="#89B4FA")
-            draw.ellipse([bx + bw - r, by + bh - r, bx + bw + r, by + bh + r], fill="#F5E0DC", outline="#89B4FA")
+            draw.ellipse([bx - r, by - r, bx + r, by + r], fill="#F5E0DC", outline=box_color)
+            draw.ellipse([bx + bw - r, by - r, bx + bw + r, by + r], fill="#F5E0DC", outline=box_color)
+            draw.ellipse([bx - r, by + bh - r, bx + r, by + bh + r], fill="#F5E0DC", outline=box_color)
+            draw.ellipse([bx + bw - r, by + bh - r, bx + bw + r, by + bh + r], fill="#F5E0DC", outline=box_color)
 
         frame_rgb = np.array(pil_img)
 
@@ -403,14 +417,22 @@ class VideoPreviewWidget(QWidget):
             self._dragged_item = sel
             self._resize_corner = None
 
+            cur_x, cur_y, cur_w, cur_h, cur_fs = sel.get_transform_at(self.current_sec) if hasattr(sel, 'get_transform_at') else (sel.x_ratio, sel.y_ratio, getattr(sel, 'width_ratio', 0.3), getattr(sel, 'height_ratio', 0.3), getattr(sel, 'font_size', 40))
+
             if hasattr(sel, 'width_ratio'):
-                bw = max(30, int(rw * sel.width_ratio))
-                bh = max(30, int(rh * sel.height_ratio))
+                bw = max(30, int(rw * cur_w))
+                bh = max(30, int(rh * cur_h))
             else:
                 bw, bh = 150, 40
 
-            bx = int((rw - bw) * sel.x_ratio)
-            by = int((rh - bh) * sel.y_ratio)
+            bx = int((rw - bw) * cur_x)
+            by = int((rh - bh) * cur_y)
+
+            # Save initial bounding rect coordinates for anchor-based corner resizing
+            self._init_bx = bx
+            self._init_by = by
+            self._init_bw = bw
+            self._init_bh = bh
 
             r = 25 # Generous 25px hit target for corner handles
             if abs(local_x - bx) <= r and abs(local_y - by) <= r:
@@ -436,40 +458,66 @@ class VideoPreviewWidget(QWidget):
 
             corner = getattr(self, '_resize_corner', None)
             if corner:
-                bw = max(30, int(rw * getattr(item, 'width_ratio', 0.2)))
-                bh = max(30, int(rh * getattr(item, 'height_ratio', 0.2)))
-                bx = int((rw - bw) * item.x_ratio)
-                by = int((rh - bh) * item.y_ratio)
+                init_x1 = getattr(self, '_init_bx', 0)
+                init_y1 = getattr(self, '_init_by', 0)
+                init_x2 = init_x1 + getattr(self, '_init_bw', 100)
+                init_y2 = init_y1 + getattr(self, '_init_bh', 100)
 
                 if corner == "BR":
-                    new_w = max(30, local_x - bx)
-                    new_h = max(30, local_y - by)
+                    x1 = init_x1
+                    y1 = init_y1
+                    x2 = max(x1 + 30, local_x)
+                    y2 = max(y1 + 30, local_y)
                 elif corner == "BL":
-                    new_w = max(30, (bx + bw) - local_x)
-                    new_h = max(30, local_y - by)
-                    item.x_ratio = max(0.0, min(1.0, local_x / float(rw)))
+                    x1 = min(init_x2 - 30, local_x)
+                    y1 = init_y1
+                    x2 = init_x2
+                    y2 = max(y1 + 30, local_y)
                 elif corner == "TR":
-                    new_w = max(30, local_x - bx)
-                    new_h = max(30, (by + bh) - local_y)
-                    item.y_ratio = max(0.0, min(1.0, local_y / float(rh)))
+                    x1 = init_x1
+                    y1 = min(init_y2 - 30, local_y)
+                    x2 = max(x1 + 30, local_x)
+                    y2 = init_y2
                 elif corner == "TL":
-                    new_w = max(30, (bx + bw) - local_x)
-                    new_h = max(30, (by + bh) - local_y)
-                    item.x_ratio = max(0.0, min(1.0, local_x / float(rw)))
-                    item.y_ratio = max(0.0, min(1.0, local_y / float(rh)))
+                    x1 = min(init_x2 - 30, local_x)
+                    y1 = min(init_y2 - 30, local_y)
+                    x2 = init_x2
+                    y2 = init_y2
+
+                new_w = max(30, x2 - x1)
+                new_h = max(30, y2 - y1)
+
+                denom_w = float(rw - new_w) if rw != new_w else 1.0
+                denom_h = float(rh - new_h) if rh != new_h else 1.0
+
+                calc_x_ratio = max(0.0, min(1.0, round(x1 / denom_w, 3)))
+                calc_y_ratio = max(0.0, min(1.0, round(y1 / denom_h, 3)))
 
                 if hasattr(item, 'width_ratio'):
                     item.width_ratio = round(max(0.05, min(1.0, new_w / float(rw))), 3)
                     item.height_ratio = round(max(0.05, min(1.0, new_h / float(rh))), 3)
+                    item.x_ratio = calc_x_ratio
+                    item.y_ratio = calc_y_ratio
                 elif hasattr(item, 'font_size'):
                     item.font_size = max(10, min(200, int(new_h * 0.8)))
+                    item.x_ratio = calc_x_ratio
+                    item.y_ratio = calc_y_ratio
             else:
                 off_x = getattr(self, '_drag_offset_x', 0)
                 off_y = getattr(self, '_drag_offset_y', 0)
                 new_bx = local_x - off_x
                 new_by = local_y - off_y
-                item.x_ratio = max(0.0, min(1.0, new_bx / float(rw)))
-                item.y_ratio = max(0.0, min(1.0, new_by / float(rh)))
+
+                cur_w = getattr(item, 'width_ratio', 0.3)
+                cur_h = getattr(item, 'height_ratio', 0.3)
+                bw = max(30, int(rw * cur_w))
+                bh = max(30, int(rh * cur_h))
+
+                denom_w = float(rw - bw) if rw != bw else 1.0
+                denom_h = float(rh - bh) if rh != bh else 1.0
+
+                item.x_ratio = max(0.0, min(1.0, round(new_bx / denom_w, 3)))
+                item.y_ratio = max(0.0, min(1.0, round(new_by / denom_h, 3)))
 
             if not getattr(self, '_is_rendering', False):
                 self._is_rendering = True
