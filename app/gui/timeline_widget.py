@@ -161,15 +161,15 @@ class TimelineCanvas(QWidget):
         painter.fillRect(0, 0, w, h, QColor("#181825"))
 
         ruler_h = 28
-        track_h = 40
-        track_y = [32, 77, 122, 167, 212, 257]
-        track_names = ["PISTA RECORTES", "PISTA VELOCIDAD", "PISTA TEXTO 1", "PISTA TEXTO 2", "PISTA IMAGENES", "PISTA VIDEO PIP"]
+        track_h = 38
+        tracks = self._get_track_layout()
 
-        for idx, ty in enumerate(track_y):
+        for idx, (t_name, t_type, t_subidx) in enumerate(tracks):
+            ty = 32 + idx * 43
             painter.fillRect(115, ty, w - 120, track_h, QColor("#1E1E2E"))
             painter.setPen(QColor("#A6ADC8"))
             painter.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
-            painter.drawText(5, ty + 24, track_names[idx])
+            painter.drawText(5, ty + 24, t_name)
 
         # 1. RULER
         painter.setPen(QPen(QColor("#45475A"), 1))
@@ -187,7 +187,6 @@ class TimelineCanvas(QWidget):
                 painter.drawText(int(x) - 15, ruler_h - 14, 30, 12, Qt.AlignmentFlag.AlignCenter, f"{curr_t:.1f}s")
             curr_t += step_sec
 
-        # Helper to draw handles and Photoshop-style Keyframe Diamond Nodes (Rombos ◆)
         def draw_clip_block(x1, x2, ty, bg_color, is_selected, title, item=None):
             if x2 > 115 and x1 < w:
                 block_w = max(6, x2 - x1)
@@ -197,20 +196,17 @@ class TimelineCanvas(QWidget):
                 rect = QRect(int(x1), ty + 2, int(block_w), track_h - 4)
                 painter.drawRoundedRect(rect, 4, 4)
 
-                # Horizontal center line through clip for keyframe nodes
                 y_center = ty + (track_h // 2)
                 painter.setPen(QPen(QColor("rgba(17, 17, 27, 0.4)"), 1.5, Qt.PenStyle.DashLine))
                 painter.drawLine(int(x1) + 4, y_center, int(x1 + block_w) - 4, y_center)
 
-                # Draw Photoshop Keyframe Diamond Nodes (Rombos ◆)
                 if item and getattr(item, 'enable_keyframes', False):
                     nodes = getattr(item, 'keyframe_nodes', [])
                     for node in nodes:
                         nsec = node.get('sec', 0.0)
-                        if item.start_sec <= nsec <= item.end_sec:
+                        if item.start_sec - 0.05 <= nsec <= item.end_sec + 0.05:
                             nx = self._sec_to_x(nsec)
                             if 115 <= nx <= w:
-                                # Cyan/Magenta Diamond Node (Rombo ◆)
                                 painter.setPen(QPen(QColor("#11111B"), 1))
                                 painter.setBrush(QBrush(QColor("#F5C2E7") if is_selected else QColor("#89B4FA")))
                                 d_size = 5
@@ -222,7 +218,6 @@ class TimelineCanvas(QWidget):
                                 ]
                                 painter.drawPolygon(diamond)
 
-                # Draw Left/Right Edge Resize Handles
                 if is_selected:
                     painter.setBrush(QBrush(QColor("#FFFFFF")))
                     painter.drawRect(int(x1), ty + 4, 4, track_h - 8)
@@ -232,42 +227,41 @@ class TimelineCanvas(QWidget):
                 painter.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
                 painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, title)
 
-        # 2. PISTA RECORTES (Track 0)
-        for idx, item in enumerate(self.intervals):
-            x1 = max(115, self._sec_to_x(item.start_sec))
-            x2 = min(w, self._sec_to_x(item.end_sec))
-            draw_clip_block(x1, x2, track_y[0], QColor("#F38BA8"), item == self.selected_interval, f"✂ Clip {idx+1} [{item.start_sec:.1f}s - {item.end_sec:.1f}s]")
+        for idx, (t_name, t_type, t_subidx) in enumerate(tracks):
+            ty = 32 + idx * 43
+            if t_type == "recortes":
+                for c_idx, item in enumerate(self.intervals):
+                    x1 = max(115, self._sec_to_x(item.start_sec))
+                    x2 = min(w, self._sec_to_x(item.end_sec))
+                    draw_clip_block(x1, x2, ty, QColor("#F38BA8"), item == self.selected_interval, f"✂ Clip {c_idx+1} [{item.start_sec:.1f}s - {item.end_sec:.1f}s]")
+            elif t_type == "velocidad":
+                for item in self.intervals:
+                    x1 = max(115, self._sec_to_x(item.start_sec))
+                    x2 = min(w, self._sec_to_x(item.end_sec))
+                    col = QColor("#FAB387") if item.speed < 0.9 else (QColor("#CBA6F7") if item.speed > 1.1 else QColor("#89B4FA"))
+                    rev_tag = " 🔄" if item.reverse else ""
+                    draw_clip_block(x1, x2, ty, col, item == self.selected_interval, f"⚡ {item.speed:.2f}x{rev_tag}")
+            elif t_type == "text":
+                for t_clip in self.text_clips:
+                    if getattr(t_clip, 'track_index', 0) == t_subidx:
+                        x1 = max(115, self._sec_to_x(t_clip.start_sec))
+                        x2 = min(w, self._sec_to_x(t_clip.end_sec))
+                        draw_clip_block(x1, x2, ty, QColor("#A6E3A1"), t_clip == self.selected_text_clip, f"💬 {t_clip.text[:10]}", t_clip)
+            elif t_type == "image":
+                for img_clip in self.image_clips:
+                    if getattr(img_clip, 'track_index', 0) == t_subidx:
+                        x1 = max(115, self._sec_to_x(img_clip.start_sec))
+                        x2 = min(w, self._sec_to_x(img_clip.end_sec))
+                        bname = os.path.basename(img_clip.image_path)[:10] if img_clip.image_path else "Imagen"
+                        draw_clip_block(x1, x2, ty, QColor("#89DCEB"), img_clip == self.selected_image_clip, f"🖼 {bname}", img_clip)
+            elif t_type == "video":
+                for v_clip in self.video_clips:
+                    if getattr(v_clip, 'track_index', 0) == t_subidx:
+                        x1 = max(115, self._sec_to_x(v_clip.start_sec))
+                        x2 = min(w, self._sec_to_x(v_clip.end_sec))
+                        bname = os.path.basename(v_clip.video_path)[:10] if v_clip.video_path else "Video PIP"
+                        draw_clip_block(x1, x2, ty, QColor("#F9E2AF"), v_clip == self.selected_video_clip, f"📹 {bname}", v_clip)
 
-        # 3. SPEED INTERVALS (Track 1)
-        for item in self.intervals:
-            x1 = max(115, self._sec_to_x(item.start_sec))
-            x2 = min(w, self._sec_to_x(item.end_sec))
-            col = QColor("#FAB387") if item.speed < 0.9 else (QColor("#CBA6F7") if item.speed > 1.1 else QColor("#89B4FA"))
-            rev_tag = " 🔄" if item.reverse else ""
-            draw_clip_block(x1, x2, track_y[1], col, item == self.selected_interval, f"⚡ {item.speed:.2f}x{rev_tag}")
-
-        # 4. TEXT CLIPS (Track 2 & 3)
-        for t_clip in self.text_clips:
-            t_idx = 2 if getattr(t_clip, 'track_index', 0) == 0 else 3
-            x1 = max(115, self._sec_to_x(t_clip.start_sec))
-            x2 = min(w, self._sec_to_x(t_clip.end_sec))
-            draw_clip_block(x1, x2, track_y[t_idx], QColor("#A6E3A1"), t_clip == self.selected_text_clip, f"💬 {t_clip.text[:10]}", t_clip)
-
-        # 5. IMAGE CLIPS (Track 4)
-        for img_clip in self.image_clips:
-            x1 = max(115, self._sec_to_x(img_clip.start_sec))
-            x2 = min(w, self._sec_to_x(img_clip.end_sec))
-            bname = os.path.basename(img_clip.image_path)[:10] if img_clip.image_path else "Imagen"
-            draw_clip_block(x1, x2, track_y[4], QColor("#89DCEB"), img_clip == self.selected_image_clip, f"🖼 {bname}", img_clip)
-
-        # 6. VIDEO OVERLAY CLIPS (Track 5)
-        for v_clip in self.video_clips:
-            x1 = max(115, self._sec_to_x(v_clip.start_sec))
-            x2 = min(w, self._sec_to_x(v_clip.end_sec))
-            bname = os.path.basename(v_clip.video_path)[:10] if v_clip.video_path else "Video PIP"
-            draw_clip_block(x1, x2, track_y[5], QColor("#F9E2AF"), v_clip == self.selected_video_clip, f"📹 {bname}", v_clip)
-
-        # 7. PLAYHEAD
         px = self._sec_to_x(self.current_sec)
         if 115 <= px <= w:
             painter.setPen(QPen(QColor("#F5E0DC"), 2))
@@ -275,14 +269,6 @@ class TimelineCanvas(QWidget):
             painter.setBrush(QBrush(QColor("#F5E0DC")))
             points = [QPoint(int(px) - 5, 0), QPoint(int(px) + 5, 0), QPoint(int(px) + 5, 8), QPoint(int(px), 14), QPoint(int(px) - 5, 8)]
             painter.drawPolygon(points)
-
-    def mouseDoubleClickEvent(self, event: QMouseEvent):
-        super().mouseDoubleClickEvent(event)
-        sel = self.selected_text_clip or self.selected_image_clip or self.selected_video_clip
-        if sel:
-            dlg = ClipInspectorDialog(sel, self)
-            if dlg.exec():
-                self.timeline_changed.emit()
 
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -296,7 +282,7 @@ class TimelineCanvas(QWidget):
                 self.playhead_moved.emit(new_sec)
                 return
 
-            def check_handle_or_body(item, track_y_val):
+            def check_handle_or_body(item):
                 x1 = self._sec_to_x(item.start_sec)
                 x2 = self._sec_to_x(item.end_sec)
                 if abs(x - x1) <= 8:
@@ -319,57 +305,53 @@ class TimelineCanvas(QWidget):
                     return True
                 return False
 
-            # Check Tracks
-            if 32 <= y <= 72: # Track 0: PISTA RECORTES
-                for item in self.intervals:
-                    if check_handle_or_body(item, 32):
-                        self.selected_interval = item
-                        self.selected_text_clip = None
-                        self.selected_image_clip = None
-                        self.selected_video_clip = None
-                        self.interval_selected.emit(item)
-                        self.update()
-                        return
-            elif 77 <= y <= 117: # Track 1: PISTA VELOCIDAD
-                for item in self.intervals:
-                    if check_handle_or_body(item, 77):
-                        self.selected_interval = item
-                        self.selected_text_clip = None
-                        self.selected_image_clip = None
-                        self.selected_video_clip = None
-                        self.interval_selected.emit(item)
-                        self.update()
-                        return
-            elif 122 <= y <= 207: # Track 2 & 3: PISTA TEXTO 1 & 2
-                for t_clip in self.text_clips:
-                    if check_handle_or_body(t_clip, 122):
-                        self.selected_text_clip = t_clip
-                        self.selected_interval = None
-                        self.selected_image_clip = None
-                        self.selected_video_clip = None
-                        self.text_clip_selected.emit(t_clip)
-                        self.update()
-                        return
-            elif 212 <= y <= 252: # Track 4: PISTA IMAGENES
-                for img_clip in self.image_clips:
-                    if check_handle_or_body(img_clip, 212):
-                        self.selected_image_clip = img_clip
-                        self.selected_interval = None
-                        self.selected_text_clip = None
-                        self.selected_video_clip = None
-                        self.image_clip_selected.emit(img_clip)
-                        self.update()
-                        return
-            elif 257 <= y <= 297: # Track 5: PISTA VIDEO PIP
-                for v_clip in self.video_clips:
-                    if check_handle_or_body(v_clip, 257):
-                        self.selected_video_clip = v_clip
-                        self.selected_interval = None
-                        self.selected_text_clip = None
-                        self.selected_image_clip = None
-                        self.video_clip_selected.emit(v_clip)
-                        self.update()
-                        return
+            tracks = self._get_track_layout()
+            track_idx = int((y - 32) // 43)
+            if 0 <= track_idx < len(tracks):
+                t_name, t_type, t_subidx = tracks[track_idx]
+                if t_type in ("recortes", "velocidad"):
+                    for item in self.intervals:
+                        if check_handle_or_body(item):
+                            self.selected_interval = item
+                            self.selected_text_clip = None
+                            self.selected_image_clip = None
+                            self.selected_video_clip = None
+                            self.interval_selected.emit(item)
+                            self.update()
+                            return
+                elif t_type == "text":
+                    for t_clip in self.text_clips:
+                        if getattr(t_clip, 'track_index', 0) == t_subidx:
+                            if check_handle_or_body(t_clip):
+                                self.selected_text_clip = t_clip
+                                self.selected_interval = None
+                                self.selected_image_clip = None
+                                self.selected_video_clip = None
+                                self.text_clip_selected.emit(t_clip)
+                                self.update()
+                                return
+                elif t_type == "image":
+                    for img_clip in self.image_clips:
+                        if getattr(img_clip, 'track_index', 0) == t_subidx:
+                            if check_handle_or_body(img_clip):
+                                self.selected_image_clip = img_clip
+                                self.selected_interval = None
+                                self.selected_text_clip = None
+                                self.selected_video_clip = None
+                                self.image_clip_selected.emit(img_clip)
+                                self.update()
+                                return
+                elif t_type == "video":
+                    for v_clip in self.video_clips:
+                        if getattr(v_clip, 'track_index', 0) == t_subidx:
+                            if check_handle_or_body(v_clip):
+                                self.selected_video_clip = v_clip
+                                self.selected_interval = None
+                                self.selected_text_clip = None
+                                self.selected_image_clip = None
+                                self.video_clip_selected.emit(v_clip)
+                                self.update()
+                                return
 
     def mouseMoveEvent(self, event: QMouseEvent):
         x = event.position().x()
@@ -608,17 +590,52 @@ class TimelineWidget(QWidget):
             QMenu::item:selected { background-color: #89B4FA; color: #11111B; }
         """)
         
-        act_text = menu.addAction("💬 + Nueva Pista de Texto")
-        act_img = menu.addAction("🖼 + Nueva Pista de Imagen / Marca")
-        act_vid = menu.addAction("📹 + Nueva Pista de Vídeo PIP")
+        act_text = menu.addAction("💬 + Nueva Pista de Texto Independiente")
+        act_img = menu.addAction("🖼 + Nueva Pista de Imagen / Marca Independiente")
+        act_vid = menu.addAction("📹 + Nueva Pista de Vídeo PIP Independiente")
         
         chosen = menu.exec(self.btn_add_track.mapToGlobal(QPoint(0, self.btn_add_track.height())))
         if chosen == act_text:
-            self._on_add_text_clicked()
+            self.canvas.add_new_track('text')
+            new_idx = 1 + self.canvas.extra_text_tracks
+            start = self.canvas.current_sec
+            end = min(self.canvas.duration, start + 3.0)
+            t_clip = TimelineTextClip(text=f"Texto Pista {new_idx+1}", start_sec=start, end_sec=end, track_index=new_idx)
+            self.canvas.text_clips.append(t_clip)
+            self.canvas.selected_text_clip = t_clip
+            self.canvas.update()
+            self.timeline_updated.emit()
+            self._on_text_clip_selected(t_clip)
         elif chosen == act_img:
-            self._on_add_image_clicked()
+            file_path, _ = QFileDialog.getOpenFileName(
+                self, "Seleccionar Imagen para Nueva Pista", "", "Imágenes (*.png *.jpg *.jpeg *.bmp *.webp)"
+            )
+            if file_path:
+                self.canvas.add_new_track('image')
+                new_idx = self.canvas.extra_image_tracks
+                start = self.canvas.current_sec
+                end = min(self.canvas.duration, start + 5.0)
+                img_clip = TimelineImageClip(image_path=file_path, start_sec=start, end_sec=end, track_index=new_idx)
+                self.canvas.image_clips.append(img_clip)
+                self.canvas.selected_image_clip = img_clip
+                self.canvas.update()
+                self.timeline_updated.emit()
+                self._on_image_clip_selected(img_clip)
         elif chosen == act_vid:
-            self._on_add_video_clicked()
+            file_path, _ = QFileDialog.getOpenFileName(
+                self, "Seleccionar Video PIP para Nueva Pista", "", "Videos (*.mp4 *.avi *.mov *.webm *.mkv)"
+            )
+            if file_path:
+                self.canvas.add_new_track('video')
+                new_idx = self.canvas.extra_video_tracks
+                start = self.canvas.current_sec
+                end = min(self.canvas.duration, start + 5.0)
+                v_clip = TimelineVideoClip(video_path=file_path, start_sec=start, end_sec=end, track_index=new_idx)
+                self.canvas.video_clips.append(v_clip)
+                self.canvas.selected_video_clip = v_clip
+                self.canvas.update()
+                self.timeline_updated.emit()
+                self._on_video_clip_selected(v_clip)
 
     def _on_interval_selected(self, interval: SpeedInterval):
         self.txt_clip_content.setVisible(False)
@@ -638,24 +655,42 @@ class TimelineWidget(QWidget):
         sel = self.canvas.selected_text_clip or self.canvas.selected_image_clip or self.canvas.selected_video_clip
         if sel:
             sel.enable_keyframes = True
-            sel.start_x_ratio = sel.x_ratio
-            sel.start_y_ratio = sel.y_ratio
+            sel.start_x_ratio = getattr(sel, 'x_ratio', 0.5)
+            sel.start_y_ratio = getattr(sel, 'y_ratio', 0.5)
             sel.start_width_ratio = getattr(sel, 'width_ratio', 0.3)
             sel.start_height_ratio = getattr(sel, 'height_ratio', 0.3)
             sel.start_font_size = getattr(sel, 'font_size', 40)
+
+            if not hasattr(sel, 'keyframe_nodes') or sel.keyframe_nodes is None:
+                sel.keyframe_nodes = []
+            
+            sel.keyframe_nodes = [n for n in sel.keyframe_nodes if abs(n.get('sec', -1) - sel.start_sec) > 0.05]
+            sel.keyframe_nodes.append({'sec': sel.start_sec, 'x': sel.start_x_ratio, 'y': sel.start_y_ratio})
+            sel.keyframe_nodes.sort(key=lambda n: n.get('sec', 0.0))
+
             self.lbl_insp_info.setText("📍 Clave de Inicio Guardada (Keyframe Start)")
+            self.canvas.update()
             self.timeline_updated.emit()
 
     def _on_set_kf_end(self):
         sel = self.canvas.selected_text_clip or self.canvas.selected_image_clip or self.canvas.selected_video_clip
         if sel:
             sel.enable_keyframes = True
-            sel.end_x_ratio = sel.x_ratio
-            sel.end_y_ratio = sel.y_ratio
+            sel.end_x_ratio = getattr(sel, 'x_ratio', 0.5)
+            sel.end_y_ratio = getattr(sel, 'y_ratio', 0.5)
             sel.end_width_ratio = getattr(sel, 'width_ratio', 0.3)
             sel.end_height_ratio = getattr(sel, 'height_ratio', 0.3)
             sel.end_font_size = getattr(sel, 'font_size', 40)
+
+            if not hasattr(sel, 'keyframe_nodes') or sel.keyframe_nodes is None:
+                sel.keyframe_nodes = []
+
+            sel.keyframe_nodes = [n for n in sel.keyframe_nodes if abs(n.get('sec', -1) - sel.end_sec) > 0.05]
+            sel.keyframe_nodes.append({'sec': sel.end_sec, 'x': sel.end_x_ratio, 'y': sel.end_y_ratio})
+            sel.keyframe_nodes.sort(key=lambda n: n.get('sec', 0.0))
+
             self.lbl_insp_info.setText("🏁 Clave de Fin Guardada (Keyframe End)")
+            self.canvas.update()
             self.timeline_updated.emit()
 
     def _on_text_clip_selected(self, t_clip: TimelineTextClip):

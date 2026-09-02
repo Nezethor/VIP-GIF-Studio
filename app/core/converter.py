@@ -365,7 +365,7 @@ class MediaConverterWorker(QThread):
                             spd /= 0.5
                         if abs(spd - 1.0) > 0.001:
                             af_parts.append(f"atempo={spd:.4f}")
-                        audio_filters.append(f"[0:a]{','.join(af_parts)}[{a_lbl}]")
+                        audio_filters.append(f"[1:a]{','.join(af_parts)}[{a_lbl}]")
                         concat_a.append(f"[{a_lbl}]")
 
                     audio_filters.append(f"{''.join(concat_a)}concat=n={len(intervals)}:v=0:a=1[outa]")

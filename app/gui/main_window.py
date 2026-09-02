@@ -21,8 +21,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("VIP GIF Studio - Convertidor de Video y GIF Profesional")
-        self.resize(1200, 840)
-        self.setMinimumSize(900, 650)
+        self.resize(1280, 850)
+        self.setMinimumSize(950, 650)
         self.setAcceptDrops(True)
 
         self.current_video_path = ""
@@ -112,6 +112,7 @@ class MainWindow(QMainWindow):
         # --- RIGHT PANEL: Settings & Controls inside ScrollArea ---
         self.right_scroll = QScrollArea(splitter)
         self.right_scroll.setWidgetResizable(True)
+        self.right_scroll.setMinimumWidth(360)
         self.right_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.right_scroll.setStyleSheet("QScrollArea { background-color: transparent; border: none; }")
 
@@ -175,16 +176,17 @@ class MainWindow(QMainWindow):
         settings_layout.addWidget(lbl_scale)
         settings_layout.addWidget(self.combo_scale)
 
-        # FPS Selection (Default 30 FPS)
+        # FPS Selection (Default 30 FPS, Up to 60 FPS)
         lbl_fps = QLabel("Fotogramas por Segundo (FPS):", settings_group)
         self.combo_fps = QComboBox(settings_group)
         self.combo_fps.addItems([
+            "60 FPS (Ultra Fluidez 60fps)",
             "30 FPS (Máxima Fluidez - Por Defecto)",
             "24 FPS (Fluidez Cine)",
             "15 FPS (Recomendado - Tamaño Óptimo)",
             "10 FPS (Archivo Pequeño)"
         ])
-        self.combo_fps.setCurrentIndex(0)
+        self.combo_fps.setCurrentIndex(1)
         settings_layout.addWidget(lbl_fps)
         settings_layout.addWidget(self.combo_fps)
 
@@ -392,9 +394,10 @@ class MainWindow(QMainWindow):
 
     def _get_selected_fps(self) -> int:
         idx = self.combo_fps.currentIndex()
-        if idx == 0: return 30
-        elif idx == 1: return 24
-        elif idx == 2: return 15
+        if idx == 0: return 60
+        elif idx == 1: return 30
+        elif idx == 2: return 24
+        elif idx == 3: return 15
         else: return 10
 
     def _get_selected_dither(self) -> str:
