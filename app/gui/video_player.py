@@ -235,6 +235,27 @@ class VideoPreviewWidget(QWidget):
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         h, w, ch = frame_rgb.shape
 
+        # Draw active image overlays onto frame using PIL
+        active_imgs = [img for img in getattr(self, 'image_clips', []) if img.is_visible_at(self.current_sec)]
+        if active_imgs:
+            pil_img = Image.fromarray(frame_rgb)
+            for img_clip in active_imgs:
+                if os.path.exists(img_clip.image_path):
+                    try:
+                        overlay_img = Image.open(img_clip.image_path).convert("RGBA")
+                        target_w = max(20, int(w * img_clip.width_ratio))
+                        target_h = max(20, int(h * img_clip.height_ratio))
+                        overlay_img = overlay_img.resize((target_w, target_h), Image.Resampling.LANCZOS)
+
+                        pos_x = int((w - target_w) * img_clip.x_ratio)
+                        pos_y = int((h - target_h) * img_clip.y_ratio)
+
+                        pil_img.paste(overlay_img, (pos_x, pos_y), overlay_img)
+                    except Exception:
+                        pass
+            import numpy as np
+            frame_rgb = np.array(pil_img.convert("RGB"))
+
         # Draw active subtitles onto frame using PIL
         active_subs = [s for s in self.subtitles if s.is_visible_at(self.current_sec)]
         if active_subs:
@@ -271,9 +292,8 @@ class VideoPreviewWidget(QWidget):
 
             import numpy as np
             frame_rgb = np.array(pil_img)
-            q_img = QImage(frame_rgb.data, w, h, ch * w, QImage.Format.Format_RGB888)
-        else:
-            q_img = QImage(frame_rgb.data, w, h, ch * w, QImage.Format.Format_RGB888)
+
+        q_img = QImage(frame_rgb.data, w, h, ch * w, QImage.Format.Format_RGB888)
 
         # Scale keeping aspect ratio
         lbl_size = self.video_label.size()

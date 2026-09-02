@@ -296,6 +296,9 @@ class MainWindow(QMainWindow):
     def _on_timeline_updated(self):
         combined = list(self.subtitles) + list(self.timeline.canvas.text_clips)
         self.video_player.set_subtitles(combined)
+        self.video_player.image_clips = list(self.timeline.canvas.image_clips)
+        if self.video_player.cap and not self.video_player.timer.isActive():
+            self.video_player._update_preview()
 
     def _load_video_file(self, file_path: str):
         if not os.path.exists(file_path):
