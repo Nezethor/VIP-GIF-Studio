@@ -21,7 +21,7 @@ def build():
         "--noconsole",
         "--onefile",
         "--icon", icon_param,
-        "--name", "VIP_GIF_Studio_v1.4.0",
+        "--name", "VIP_GIF_Studio_v1.5.0",
         "--add-data", add_data_param,
         "--add-data", add_assets,
         "--hidden-import", "PyQt6",

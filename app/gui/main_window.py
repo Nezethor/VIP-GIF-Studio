@@ -56,6 +56,11 @@ class MainWindow(QMainWindow):
         header_layout.addWidget(self.lbl_file_path)
         header_layout.addStretch()
 
+        self.btn_toggle_panel = QPushButton("▶ Ocultar Panel Derecho", central_widget)
+        self.btn_toggle_panel.setStyleSheet("font-weight: bold; background-color: #313244; color: #CDD6F4;")
+        self.btn_toggle_panel.clicked.connect(self._toggle_right_panel)
+        header_layout.addWidget(self.btn_toggle_panel)
+
         main_layout.addLayout(header_layout)
 
         # Splitter Layout (Left: Video Player & Photoshop Timeline, Right: Settings)
@@ -81,16 +86,16 @@ class MainWindow(QMainWindow):
         splitter.addWidget(left_container)
 
         # --- RIGHT PANEL: Settings & Controls inside ScrollArea ---
-        right_scroll = QScrollArea(splitter)
-        right_scroll.setWidgetResizable(True)
-        right_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        right_scroll.setStyleSheet("QScrollArea { background-color: transparent; border: none; }")
+        self.right_scroll = QScrollArea(splitter)
+        self.right_scroll.setWidgetResizable(True)
+        self.right_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.right_scroll.setStyleSheet("QScrollArea { background-color: transparent; border: none; }")
 
         right_container = QWidget()
         right_layout = QVBoxLayout(right_container)
         right_layout.setContentsMargins(5, 5, 5, 5)
         right_layout.setSpacing(12)
-        right_scroll.setWidget(right_container)
+        self.right_scroll.setWidget(right_container)
 
         # Info Box
         info_group = QGroupBox("Metadatos del Archivo", right_container)
@@ -246,7 +251,7 @@ class MainWindow(QMainWindow):
 
         right_layout.addWidget(export_group)
 
-        splitter.addWidget(right_scroll)
+        splitter.addWidget(self.right_scroll)
         splitter.setSizes([700, 430])
 
         main_layout.addWidget(splitter)
@@ -262,6 +267,14 @@ class MainWindow(QMainWindow):
         )
         if file_path:
             self._load_video_file(file_path)
+
+    def _toggle_right_panel(self):
+        is_vis = self.right_scroll.isVisible()
+        self.right_scroll.setVisible(not is_vis)
+        if is_vis:
+            self.btn_toggle_panel.setText("◀ Mostrar Panel Derecho")
+        else:
+            self.btn_toggle_panel.setText("▶ Ocultar Panel Derecho")
 
     def _open_subtitle_manager(self):
         if not self.video_player.video_info or not self.video_player.video_info.is_valid:

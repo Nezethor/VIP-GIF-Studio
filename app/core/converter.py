@@ -214,6 +214,7 @@ class MediaConverterWorker(QThread):
                 if is_video_export:
                     cmd_video = [
                         ffmpeg_exe, "-y",
+                        "-threads", "0",
                         "-i", self.input_path,
                         "-filter_complex", full_filter_complex,
                         "-map", "[outv]",
@@ -221,7 +222,7 @@ class MediaConverterWorker(QThread):
                         "-c:v", "libx264",
                         "-c:a", "aac",
                         "-pix_fmt", "yuv420p",
-                        "-preset", "medium",
+                        "-preset", "fast",
                         "-crf", "20",
                         self.output_path
                     ]
@@ -230,6 +231,7 @@ class MediaConverterWorker(QThread):
                     palette_file = self.output_path + ".palette.png"
                     cmd_pass1 = [
                         ffmpeg_exe, "-y",
+                        "-threads", "0",
                         "-i", self.input_path,
                         "-filter_complex", f"{full_filter_complex};[outv]palettegen=stats_mode=full:max_colors=256[pal]",
                         "-map", "[pal]",
@@ -240,6 +242,7 @@ class MediaConverterWorker(QThread):
                     dither_option = f"dither={self.dither}:diff_mode=rectangle" if self.dither != "none" else "dither=none"
                     cmd_pass2 = [
                         ffmpeg_exe, "-y",
+                        "-threads", "0",
                         "-i", self.input_path,
                         "-i", palette_file,
                         "-filter_complex", f"{full_filter_complex};[outv][1:v]paletteuse={dither_option}[gifout]",
