@@ -264,8 +264,9 @@ class VideoPreviewWidget(QWidget):
                 # Draw text fill
                 draw.text((x, y), sub.text, font=font, fill=sub.color)
 
-            frame_rgb = cv2.cvtColor(cv2.cvtColor(Image.Image.toqimage(pil_img).toImage().bits(), cv2.COLOR_RGBA2RGB), cv2.COLOR_RGB2BGR)
-            q_img = QImage(pil_img.tobytes(), w, h, ch * w, QImage.Format.Format_RGB888)
+            import numpy as np
+            frame_rgb = np.array(pil_img)
+            q_img = QImage(frame_rgb.data, w, h, ch * w, QImage.Format.Format_RGB888)
         else:
             q_img = QImage(frame_rgb.data, w, h, ch * w, QImage.Format.Format_RGB888)
 
