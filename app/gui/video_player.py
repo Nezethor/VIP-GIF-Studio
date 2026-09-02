@@ -426,11 +426,18 @@ class VideoPreviewWidget(QWidget):
             if hasattr(sel, 'width_ratio'):
                 bw = max(30, int(rw * cur_w))
                 bh = max(30, int(rh * cur_h))
+                bx = int((rw - bw) * cur_x)
+                by = int((rh - bh) * cur_y)
             else:
-                bw, bh = 150, 40
-
-            bx = int((rw - bw) * cur_x)
-            by = int((rh - bh) * cur_y)
+                scaled_size = max(10, int(cur_fs * max(0.2, rh / 720.0)))
+                font = self._get_font(scaled_size)
+                t_box = ImageDraw.Draw(Image.new("RGB", (1, 1))).textbbox((0, 0), sel.text or "Texto", font=font)
+                text_w = t_box[2] - t_box[0]
+                text_h = t_box[3] - t_box[1]
+                bw = max(40, text_w + 30)
+                bh = max(24, text_h + 20)
+                bx = int((rw - text_w) * cur_x) - 15
+                by = int((rh - text_h) * cur_y) - 10
 
             # Save initial bounding rect coordinates for anchor-based corner resizing
             self._init_bx = bx
@@ -509,19 +516,38 @@ class VideoPreviewWidget(QWidget):
             else:
                 off_x = getattr(self, '_drag_offset_x', 0)
                 off_y = getattr(self, '_drag_offset_y', 0)
-                new_bx = local_x - off_x
-                new_by = local_y - off_y
 
-                cur_w = getattr(item, 'width_ratio', 0.3)
-                cur_h = getattr(item, 'height_ratio', 0.3)
-                bw = max(30, int(rw * cur_w))
-                bh = max(30, int(rh * cur_h))
+                if hasattr(item, 'width_ratio'):
+                    new_bx = local_x - off_x
+                    new_by = local_y - off_y
 
-                denom_w = float(rw - bw) if rw != bw else 1.0
-                denom_h = float(rh - bh) if rh != bh else 1.0
+                    cur_w = getattr(item, 'width_ratio', 0.3)
+                    cur_h = getattr(item, 'height_ratio', 0.3)
+                    bw = max(30, int(rw * cur_w))
+                    bh = max(30, int(rh * cur_h))
 
-                item.x_ratio = max(0.0, min(1.0, round(new_bx / denom_w, 3)))
-                item.y_ratio = max(0.0, min(1.0, round(new_by / denom_h, 3)))
+                    denom_w = float(rw - bw) if rw != bw else 1.0
+                    denom_h = float(rh - bh) if rh != bh else 1.0
+
+                    item.x_ratio = max(0.0, min(1.0, round(new_bx / denom_w, 3)))
+                    item.y_ratio = max(0.0, min(1.0, round(new_by / denom_h, 3)))
+                else:
+                    # Precise Text Dragging - Zero Offset!
+                    cur_fs = getattr(item, 'font_size', 40)
+                    scaled_size = max(10, int(cur_fs * max(0.2, rh / 720.0)))
+                    font = self._get_font(scaled_size)
+                    t_box = ImageDraw.Draw(Image.new("RGB", (1, 1))).textbbox((0, 0), item.text or "Texto", font=font)
+                    text_w = t_box[2] - t_box[0]
+                    text_h = t_box[3] - t_box[1]
+
+                    new_tx = local_x - off_x + 15
+                    new_ty = local_y - off_y + 10
+
+                    denom_w = float(rw - text_w) if rw != text_w else 1.0
+                    denom_h = float(rh - text_h) if rh != text_h else 1.0
+
+                    item.x_ratio = max(0.0, min(1.0, round(new_tx / denom_w, 3)))
+                    item.y_ratio = max(0.0, min(1.0, round(new_ty / denom_h, 3)))
 
             if getattr(item, 'enable_keyframes', False):
                 mid_sec = (item.start_sec + item.end_sec) / 2.0

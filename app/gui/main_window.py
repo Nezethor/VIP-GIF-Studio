@@ -81,8 +81,20 @@ class MainWindow(QMainWindow):
         left_vsplitter.setChildrenCollapsible(False)
         left_vsplitter.addWidget(self.video_player)
         left_vsplitter.addWidget(self.timeline)
-        left_vsplitter.setStretchFactor(0, 6)
-        left_vsplitter.setStretchFactor(1, 4)
+        left_vsplitter.setStretchFactor(0, 8)
+        left_vsplitter.setStretchFactor(1, 2)
+        left_vsplitter.setSizes([650, 200])
+        left_vsplitter.setStyleSheet("""
+            QSplitter::handle {
+                background-color: #45475A;
+                height: 6px;
+                margin: 2px 0px;
+                border-radius: 3px;
+            }
+            QSplitter::handle:hover {
+                background-color: #89B4FA;
+            }
+        """)
         left_layout.addWidget(left_vsplitter)
 
         self.video_player.positionChanged.connect(self.timeline.set_current_sec)

@@ -21,7 +21,7 @@ def compile_inno_setup():
     if res.returncode == 0:
         print("\n==================================================")
         print(" ¡Instalador compilado exitosamente!")
-        print(" Archivo generado en: installer_dist/VIP_GIF_Studio_Setup_v2.2.0.exe")
+        print(" Archivo generado en: installer_dist/VIP_GIF_Studio_Setup_v2.3.0.exe")
         print("==================================================")
         return True
     else:
