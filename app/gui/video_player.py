@@ -489,7 +489,7 @@ class VideoPreviewWidget(QWidget):
             from app.gui.timeline_widget import ClipInspectorDialog
             dlg = ClipInspectorDialog(sel, self)
             if dlg.exec():
-                self.update_needed.emit()
+                self.update()
 
     def mouseMoveEvent(self, event):
         super().mouseMoveEvent(event)

@@ -187,8 +187,8 @@ class TimelineCanvas(QWidget):
                 painter.drawText(int(x) - 15, ruler_h - 14, 30, 12, Qt.AlignmentFlag.AlignCenter, f"{curr_t:.1f}s")
             curr_t += step_sec
 
-        # Helper to draw handles
-        def draw_clip_block(x1, x2, ty, bg_color, is_selected, title):
+        # Helper to draw handles and Photoshop-style Keyframe Diamond Nodes (Rombos ◆)
+        def draw_clip_block(x1, x2, ty, bg_color, is_selected, title, item=None):
             if x2 > 115 and x1 < w:
                 block_w = max(6, x2 - x1)
                 pen = QPen(QColor("#FFFFFF"), 2) if is_selected else QPen(QColor("#11111B"), 1)
@@ -196,6 +196,31 @@ class TimelineCanvas(QWidget):
                 painter.setBrush(QBrush(bg_color))
                 rect = QRect(int(x1), ty + 2, int(block_w), track_h - 4)
                 painter.drawRoundedRect(rect, 4, 4)
+
+                # Horizontal center line through clip for keyframe nodes
+                y_center = ty + (track_h // 2)
+                painter.setPen(QPen(QColor("rgba(17, 17, 27, 0.4)"), 1.5, Qt.PenStyle.DashLine))
+                painter.drawLine(int(x1) + 4, y_center, int(x1 + block_w) - 4, y_center)
+
+                # Draw Photoshop Keyframe Diamond Nodes (Rombos ◆)
+                if item and getattr(item, 'enable_keyframes', False):
+                    nodes = getattr(item, 'keyframe_nodes', [])
+                    for node in nodes:
+                        nsec = node.get('sec', 0.0)
+                        if item.start_sec <= nsec <= item.end_sec:
+                            nx = self._sec_to_x(nsec)
+                            if 115 <= nx <= w:
+                                # Cyan/Magenta Diamond Node (Rombo ◆)
+                                painter.setPen(QPen(QColor("#11111B"), 1))
+                                painter.setBrush(QBrush(QColor("#F5C2E7") if is_selected else QColor("#89B4FA")))
+                                d_size = 5
+                                diamond = [
+                                    QPoint(int(nx), y_center - d_size),
+                                    QPoint(int(nx) + d_size, y_center),
+                                    QPoint(int(nx), y_center + d_size),
+                                    QPoint(int(nx) - d_size, y_center)
+                                ]
+                                painter.drawPolygon(diamond)
 
                 # Draw Left/Right Edge Resize Handles
                 if is_selected:
@@ -220,21 +245,21 @@ class TimelineCanvas(QWidget):
             t_idx = 1 if getattr(t_clip, 'track_index', 0) == 0 else 2
             x1 = max(115, self._sec_to_x(t_clip.start_sec))
             x2 = min(w, self._sec_to_x(t_clip.end_sec))
-            draw_clip_block(x1, x2, track_y[t_idx], QColor("#A6E3A1"), t_clip == self.selected_text_clip, f"💬 {t_clip.text[:10]}")
+            draw_clip_block(x1, x2, track_y[t_idx], QColor("#A6E3A1"), t_clip == self.selected_text_clip, f"💬 {t_clip.text[:10]}", t_clip)
 
         # 4. IMAGE CLIPS (Track 3)
         for img_clip in self.image_clips:
             x1 = max(115, self._sec_to_x(img_clip.start_sec))
             x2 = min(w, self._sec_to_x(img_clip.end_sec))
             bname = os.path.basename(img_clip.image_path)[:10] if img_clip.image_path else "Imagen"
-            draw_clip_block(x1, x2, track_y[3], QColor("#89DCEB"), img_clip == self.selected_image_clip, f"🖼 {bname}")
+            draw_clip_block(x1, x2, track_y[3], QColor("#89DCEB"), img_clip == self.selected_image_clip, f"🖼 {bname}", img_clip)
 
         # 5. VIDEO OVERLAY CLIPS (Track 4)
         for v_clip in self.video_clips:
             x1 = max(115, self._sec_to_x(v_clip.start_sec))
             x2 = min(w, self._sec_to_x(v_clip.end_sec))
             bname = os.path.basename(v_clip.video_path)[:10] if v_clip.video_path else "Video PIP"
-            draw_clip_block(x1, x2, track_y[4], QColor("#F9E2AF"), v_clip == self.selected_video_clip, f"📹 {bname}")
+            draw_clip_block(x1, x2, track_y[4], QColor("#F9E2AF"), v_clip == self.selected_video_clip, f"📹 {bname}", v_clip)
 
         # 6. PLAYHEAD
         px = self._sec_to_x(self.current_sec)
@@ -409,6 +434,11 @@ class TimelineWidget(QWidget):
         self.btn_add_video.clicked.connect(self._on_add_video_clicked)
         toolbar.addWidget(self.btn_add_video)
 
+        self.btn_add_track = QPushButton("➕ Agregar Nueva Pista", self)
+        self.btn_add_track.setStyleSheet("background-color: #CBA6F7; color: #11111B; font-weight: bold;")
+        self.btn_add_track.clicked.connect(self._on_add_track_menu)
+        toolbar.addWidget(self.btn_add_track)
+
         self.btn_delete = QPushButton("🗑 Eliminar Seleccionado (Supr)", self)
         self.btn_delete.setStyleSheet("background-color: #45475A; color: #F38BA8; font-weight: bold;")
         self.btn_delete.clicked.connect(self._on_delete_clicked)
@@ -486,7 +516,23 @@ class TimelineWidget(QWidget):
         self.btn_kf_end.setVisible(False)
         self.insp_layout.addWidget(self.btn_kf_end)
 
+        self.btn_add_kf_node = QPushButton("◆ Añadir Nodo Clave", self.inspector_group)
+        self.btn_add_kf_node.setToolTip("Añade un nodo fotograma clave rombo ◆ en el tiempo actual para animaciones avanzadas de múltiples puntos")
+        self.btn_add_kf_node.setStyleSheet("background-color: #F5C2E7; color: #11111B; font-weight: bold;")
+        self.btn_add_kf_node.clicked.connect(self._on_add_kf_node)
+        self.btn_add_kf_node.setVisible(False)
+        self.insp_layout.addWidget(self.btn_add_kf_node)
+
         layout.addWidget(self.inspector_group)
+
+    def _on_add_kf_node(self):
+        sel = self.canvas.selected_text_clip or self.canvas.selected_image_clip or self.canvas.selected_video_clip
+        if sel:
+            sec = self.canvas.current_sec
+            sel.add_keyframe_node(sec)
+            self.lbl_insp_info.setText(f"◆ Nodo Clave Alojado a los {sec:.2f}s")
+            self.canvas.update()
+            self.timeline_updated.emit()
 
     def set_duration(self, duration: float):
         self.canvas.set_duration(duration)
@@ -538,6 +584,26 @@ class TimelineWidget(QWidget):
             self.timeline_updated.emit()
             self._on_video_clip_selected(v_clip)
 
+    def _on_add_track_menu(self):
+        from PyQt6.QtWidgets import QMenu
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu { background-color: #313244; color: #CDD6F4; border: 1px solid #45475A; font-weight: bold; }
+            QMenu::item:selected { background-color: #89B4FA; color: #11111B; }
+        """)
+        
+        act_text = menu.addAction("💬 + Nueva Pista de Texto")
+        act_img = menu.addAction("🖼 + Nueva Pista de Imagen / Marca")
+        act_vid = menu.addAction("📹 + Nueva Pista de Vídeo PIP")
+        
+        chosen = menu.exec(self.btn_add_track.mapToGlobal(QPoint(0, self.btn_add_track.height())))
+        if chosen == act_text:
+            self._on_add_text_clicked()
+        elif chosen == act_img:
+            self._on_add_image_clicked()
+        elif chosen == act_vid:
+            self._on_add_video_clicked()
+
     def _on_interval_selected(self, interval: SpeedInterval):
         self.txt_clip_content.setVisible(False)
         self.spn_font_size.setVisible(False)
@@ -588,6 +654,7 @@ class TimelineWidget(QWidget):
         self.spn_end_sec.setVisible(True)
         self.btn_kf_start.setVisible(True)
         self.btn_kf_end.setVisible(True)
+        self.btn_add_kf_node.setVisible(True)
 
         if t_clip:
             self.txt_clip_content.blockSignals(True)
@@ -620,6 +687,7 @@ class TimelineWidget(QWidget):
         self.spn_end_sec.setVisible(True)
         self.btn_kf_start.setVisible(True)
         self.btn_kf_end.setVisible(True)
+        self.btn_add_kf_node.setVisible(True)
 
         if img_clip:
             self.spn_start_sec.blockSignals(True)
@@ -644,6 +712,7 @@ class TimelineWidget(QWidget):
         self.spn_block_speed.setVisible(True)
         self.btn_kf_start.setVisible(True)
         self.btn_kf_end.setVisible(True)
+        self.btn_add_kf_node.setVisible(True)
 
         if v_clip:
             rev_sign = -1.0 if v_clip.reverse else 1.0
