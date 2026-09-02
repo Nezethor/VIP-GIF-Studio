@@ -31,7 +31,7 @@ def get_ffmpeg_path():
 class GifConverterWorker(QThread):
     """
     Background QThread to convert video to high-quality GIF using 2-pass FFmpeg palette filter.
-    Emits signals for progress, completion, and error.
+    Supports speed adjustment (0.1x - 10.0x), reverse playback, and custom text overlays.
     """
     progress_changed = pyqtSignal(int, str)  # (percent: int, log_message: str)
     conversion_finished = pyqtSignal(str)   # (output_path: str)
@@ -46,6 +46,8 @@ class GifConverterWorker(QThread):
                  scale_width: int = 480, 
                  dither: str = "sierra2_4a", 
                  speed: float = 1.0,
+                 reverse: bool = False,
+                 subtitles: list = None,
                  parent=None):
         super().__init__(parent)
         self.input_path = input_path
@@ -55,11 +57,44 @@ class GifConverterWorker(QThread):
         self.target_fps = target_fps
         self.scale_width = scale_width
         self.dither = dither
-        self.speed = speed
+        self.speed = max(0.1, min(10.0, speed))
+        self.reverse = reverse
+        self.subtitles = subtitles or []
         self._is_cancelled = False
 
     def cancel(self):
         self._is_cancelled = True
+
+    def _build_drawtext_filters(self):
+        """Construct FFmpeg drawtext filter string for all subtitles."""
+        drawtext_filters = []
+        font_path = r"C\:/Windows/Fonts/arial.ttf"
+
+        for sub in self.subtitles:
+            if not sub.text or not sub.text.strip():
+                continue
+
+            # Escape special FFmpeg filter characters: \, ', :, %
+            escaped_text = sub.text.replace('\\', '\\\\').replace("'", "’").replace(':', '\\:').replace('%', '\\%')
+            
+            # Convert hex colors (#RRGGBB) to FFmpeg format
+            font_color = sub.color.replace('#', '0x') if sub.color.startswith('#') else 'white'
+            border_color = sub.border_color.replace('#', '0x') if sub.border_color.startswith('#') else 'black'
+
+            # Relative position calculation
+            # x_ratio = 0.5 -> (w-tw)/2 ; y_ratio = 0.8 -> (h-th)*0.8
+            x_expr = f"(w-tw)*{sub.x_ratio:.3f}"
+            y_expr = f"(h-th)*{sub.y_ratio:.3f}"
+
+            filter_str = (
+                f"drawtext=fontfile='{font_path}':text='{escaped_text}':"
+                f"x={x_expr}:y={y_expr}:fontsize={sub.font_size}:"
+                f"fontcolor={font_color}:borderw=2:bordercolor={border_color}:"
+                f"enable='between(t,{sub.start_sec:.3f},{sub.end_sec:.3f})'"
+            )
+            drawtext_filters.append(filter_str)
+
+        return drawtext_filters
 
     def run(self):
         try:
@@ -80,11 +115,23 @@ class GifConverterWorker(QThread):
 
             # Filter definitions
             pts_mult = 1.0 / self.speed if self.speed > 0 else 1.0
-            
-            # Pass 1: Generate high quality palette
-            # fps={fps},setpts={pts_mult}*PTS,scale={width}:-1:flags=lanczos,palettegen=stats_mode=full
             scale_str = f"scale={self.scale_width}:-1:flags=lanczos" if self.scale_width > 0 else "scale=iw:ih:flags=lanczos"
-            palette_filter = f"[0:v]fps={self.target_fps},setpts={pts_mult:.3f}*PTS,{scale_str},palettegen=stats_mode=full:max_colors=256"
+            
+            # Base video filters: fps, setpts, scale
+            filters_list = [f"fps={self.target_fps}", f"setpts={pts_mult:.4f}*PTS", scale_str]
+
+            # Add reverse filter if enabled
+            if self.reverse:
+                filters_list.append("reverse")
+
+            # Add drawtext filters for subtitles
+            drawtext_filters = self._build_drawtext_filters()
+            filters_list.extend(drawtext_filters)
+
+            base_vf = ",".join(filters_list)
+
+            # Pass 1: Generate palette
+            palette_filter = f"[0:v]{base_vf},palettegen=stats_mode=full:max_colors=256"
 
             cmd_pass1 = [
                 ffmpeg_exe, "-y",
@@ -102,11 +149,11 @@ class GifConverterWorker(QThread):
                 self.conversion_failed.emit("Conversión cancelada por el usuario.")
                 return
 
-            self.progress_changed.emit(40, "Paleta generada. Aplicando mapeo de color y dithering avanzado...")
+            self.progress_changed.emit(40, "Paleta generada. Aplicando mapeo de color, subtítulos y dithering avanzado...")
 
-            # Pass 2: Apply palette with high quality dithering
+            # Pass 2: Apply palette
             dither_option = f"dither={self.dither}:diff_mode=rectangle" if self.dither != "none" else "dither=none"
-            apply_filter = f"[0:v]fps={self.target_fps},setpts={pts_mult:.3f}*PTS,{scale_str}[x];[x][1:v]paletteuse={dither_option}"
+            apply_filter = f"[0:v]{base_vf}[x];[x][1:v]paletteuse={dither_option}"
 
             cmd_pass2 = [
                 ffmpeg_exe, "-y",

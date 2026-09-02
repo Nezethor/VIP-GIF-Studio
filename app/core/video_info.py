@@ -1,13 +1,15 @@
 import cv2
 import os
+from PIL import Image, ImageSequence
 
 class VideoInfo:
-    """Helper class to extract metadata and frames from video files."""
+    """Helper class to extract metadata and frames from video and GIF files."""
 
     def __init__(self, file_path: str):
         self.file_path = file_path
         self.filename = os.path.basename(file_path)
         self.is_valid = False
+        self.is_gif = file_path.lower().endswith('.gif')
         self.width = 0
         self.height = 0
         self.fps = 30.0
@@ -20,6 +22,24 @@ class VideoInfo:
         if not self.file_path or not os.path.isfile(self.file_path):
             return
 
+        if self.is_gif:
+            try:
+                with Image.open(self.file_path) as im:
+                    self.width, self.height = im.size
+                    self.total_frames = getattr(im, 'n_frames', 1)
+                    # Average frame duration in ms
+                    durations = []
+                    for frame in ImageSequence.Iterator(im):
+                        durations.append(frame.info.get('duration', 100))
+                    avg_dur_ms = sum(durations) / len(durations) if durations else 100
+                    if avg_dur_ms <= 0: avg_dur_ms = 100
+                    self.fps = 1000.0 / avg_dur_ms
+                    self.duration = (avg_dur_ms * self.total_frames) / 1000.0
+                    self.is_valid = True
+                    return
+            except Exception:
+                pass
+
         cap = cv2.VideoCapture(self.file_path)
         if not cap.isOpened():
             return
@@ -29,7 +49,7 @@ class VideoInfo:
         self.fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
         self.total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         
-        if self.fps > 0:
+        if self.fps > 0 and self.total_frames > 0:
             self.duration = self.total_frames / self.fps
         else:
             self.duration = 0.0
