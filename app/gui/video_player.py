@@ -545,6 +545,13 @@ class VideoPreviewWidget(QWidget):
 
             cur_x, cur_y, cur_w, cur_h, cur_fs = sel.get_transform_at(self.current_sec) if hasattr(sel, 'get_transform_at') else (sel.x_ratio, sel.y_ratio, getattr(sel, 'width_ratio', 0.3), getattr(sel, 'height_ratio', 0.3), getattr(sel, 'font_size', 40))
 
+            # Sync item ratios with current keyframe position so drag offset is correct
+            sel.x_ratio = cur_x
+            sel.y_ratio = cur_y
+            if hasattr(sel, 'width_ratio'):
+                sel.width_ratio = cur_w
+                sel.height_ratio = cur_h
+
             if hasattr(sel, 'width_ratio'):
                 bw = max(30, int(rw * cur_w))
                 bh = max(30, int(rh * cur_h))
@@ -695,23 +702,51 @@ class VideoPreviewWidget(QWidget):
                     item.y_ratio = max(0.0, min(1.0, round(new_ty / denom_h, 3)))
 
             if getattr(item, 'enable_keyframes', False):
-                mid_sec = (item.start_sec + item.end_sec) / 2.0
-                if self.current_sec <= mid_sec:
-                    item.start_x_ratio = item.x_ratio
-                    item.start_y_ratio = item.y_ratio
+                nodes = getattr(item, 'keyframe_nodes', None)
+                if nodes:
+                    # Find nearest node to current playhead time
+                    nearest_idx = min(range(len(nodes)), key=lambda i: abs(nodes[i].get('sec', 0) - self.current_sec))
+                    n = nodes[nearest_idx]
+                    n['x_ratio'] = item.x_ratio
+                    n['y_ratio'] = item.y_ratio
                     if hasattr(item, 'width_ratio'):
-                        item.start_width_ratio = item.width_ratio
-                        item.start_height_ratio = item.height_ratio
+                        n['width_ratio'] = item.width_ratio
+                        n['height_ratio'] = item.height_ratio
                     if hasattr(item, 'font_size'):
-                        item.start_font_size = item.font_size
+                        n['font_size'] = item.font_size
+                    # Also keep base start/end ratios in sync
+                    if nearest_idx == 0:
+                        item.start_x_ratio = item.x_ratio
+                        item.start_y_ratio = item.y_ratio
+                        if hasattr(item, 'width_ratio'):
+                            item.start_width_ratio = item.width_ratio
+                            item.start_height_ratio = item.height_ratio
+                    elif nearest_idx == len(nodes) - 1:
+                        item.end_x_ratio = item.x_ratio
+                        item.end_y_ratio = item.y_ratio
+                        if hasattr(item, 'width_ratio'):
+                            item.end_width_ratio = item.width_ratio
+                            item.end_height_ratio = item.height_ratio
                 else:
-                    item.end_x_ratio = item.x_ratio
-                    item.end_y_ratio = item.y_ratio
-                    if hasattr(item, 'width_ratio'):
-                        item.end_width_ratio = item.width_ratio
-                        item.end_height_ratio = item.height_ratio
-                    if hasattr(item, 'font_size'):
-                        item.end_font_size = item.font_size
+                    # No nodes yet; just sync base start/end by timeline half
+                    mid_sec = (item.start_sec + item.end_sec) / 2.0
+                    if self.current_sec <= mid_sec:
+                        item.start_x_ratio = item.x_ratio
+                        item.start_y_ratio = item.y_ratio
+                        if hasattr(item, 'width_ratio'):
+                            item.start_width_ratio = item.width_ratio
+                            item.start_height_ratio = item.height_ratio
+                        if hasattr(item, 'font_size'):
+                            item.start_font_size = item.font_size
+                    else:
+                        item.end_x_ratio = item.x_ratio
+                        item.end_y_ratio = item.y_ratio
+                        if hasattr(item, 'width_ratio'):
+                            item.end_width_ratio = item.width_ratio
+                            item.end_height_ratio = item.height_ratio
+                        if hasattr(item, 'font_size'):
+                            item.end_font_size = item.font_size
+
 
             if not getattr(self, '_is_rendering', False):
                 self._is_rendering = True
