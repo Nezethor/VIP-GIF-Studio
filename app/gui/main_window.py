@@ -298,6 +298,12 @@ class MainWindow(QMainWindow):
         self.video_player.set_subtitles(combined)
         self.video_player.image_clips = list(self.timeline.canvas.image_clips)
         self.video_player.video_clips = list(self.timeline.canvas.video_clips)
+        self.video_player.speed_intervals = list(self.timeline.canvas.intervals)
+        self.video_player.selected_item = (
+            self.timeline.canvas.selected_text_clip or 
+            self.timeline.canvas.selected_image_clip or 
+            self.timeline.canvas.selected_video_clip
+        )
         if self.video_player.cap and not self.video_player.timer.isActive():
             self.video_player.seek_to(self.video_player.current_sec)
 

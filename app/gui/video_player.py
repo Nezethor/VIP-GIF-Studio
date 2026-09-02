@@ -218,9 +218,22 @@ class VideoPreviewWidget(QWidget):
         if not self.is_playing or not self.video_info or not self.cap:
             return
 
+        intervals = getattr(self, 'speed_intervals', [])
+        if intervals:
+            in_any = any(inv.start_sec <= self.current_sec <= inv.end_sec for inv in intervals)
+            if not in_any:
+                next_invs = [inv for inv in intervals if inv.start_sec > self.current_sec]
+                if next_invs:
+                    next_start = min(inv.start_sec for inv in next_invs)
+                    self.seek_to(next_start)
+                    return
+                else:
+                    first_start = min(inv.start_sec for inv in intervals)
+                    self.seek_to(first_start)
+                    return
+
         self.current_sec += 0.033
         if self.current_sec >= self.end_sec:
-            # Loop playback inside trim selection
             self.current_sec = self.start_sec
             self.seek_to(self.start_sec)
             return
@@ -291,39 +304,55 @@ class VideoPreviewWidget(QWidget):
 
         # Draw active subtitles onto frame using PIL
         active_subs = [s for s in self.subtitles if s.is_visible_at(self.current_sec)]
-        if active_subs:
-            pil_img = Image.fromarray(frame_rgb)
-            draw = ImageDraw.Draw(pil_img)
-            
-            for sub in active_subs:
-                scaled_size = sub.get_scaled_font_size(h)
-                try:
-                    font = ImageFont.truetype(r"C:\Windows\Fonts\arial.ttf", scaled_size)
-                except Exception:
-                    font = ImageFont.load_default()
+        pil_img = Image.fromarray(frame_rgb)
+        draw = ImageDraw.Draw(pil_img)
 
-                bbox = draw.textbbox((0, 0), sub.text, font=font)
-                text_w = bbox[2] - bbox[0]
-                text_h = bbox[3] - bbox[1]
+        for sub in active_subs:
+            scaled_size = sub.get_scaled_font_size(h)
+            try:
+                font = ImageFont.truetype(r"C:\Windows\Fonts\arial.ttf", scaled_size)
+            except Exception:
+                font = ImageFont.load_default()
 
-                x = int((w - text_w) * sub.x_ratio)
-                y = int((h - text_h) * sub.y_ratio)
+            bbox = draw.textbbox((0, 0), sub.text, font=font)
+            text_w = bbox[2] - bbox[0]
+            text_h = bbox[3] - bbox[1]
 
-                # Draw outline
-                ox, oy = max(1, int(scaled_size / 14)), max(1, int(scaled_size / 14))
-                draw.text((x-ox, y), sub.text, font=font, fill=sub.border_color)
-                draw.text((x+ox, y), sub.text, font=font, fill=sub.border_color)
-                draw.text((x, y-oy), sub.text, font=font, fill=sub.border_color)
-                draw.text((x, y+oy), sub.text, font=font, fill=sub.border_color)
+            x = int((w - text_w) * sub.x_ratio)
+            y = int((h - text_h) * sub.y_ratio)
 
-                # Draw text fill
-                draw.text((x, y), sub.text, font=font, fill=sub.color)
+            # Draw outline
+            ox, oy = max(1, int(scaled_size / 14)), max(1, int(scaled_size / 14))
+            draw.text((x-ox, y), sub.text, font=font, fill=sub.border_color)
+            draw.text((x+ox, y), sub.text, font=font, fill=sub.border_color)
+            draw.text((x, y-oy), sub.text, font=font, fill=sub.border_color)
+            draw.text((x, y+oy), sub.text, font=font, fill=sub.border_color)
 
-                # Draw subtle box around active dragged subtitle
-                if getattr(self, '_dragged_sub', None) == sub:
-                    draw.rectangle([x-4, y-4, x+text_w+4, y+text_h+4], outline="#89B4FA", width=2)
+            # Draw text fill
+            draw.text((x, y), sub.text, font=font, fill=sub.color)
 
-            frame_rgb = np.array(pil_img)
+        # Draw smooth bounding box with corner handles around selected item
+        sel = getattr(self, 'selected_item', None) or getattr(self, '_dragged_item', None)
+        if sel and hasattr(sel, 'x_ratio') and sel.is_visible_at(self.current_sec):
+            if hasattr(sel, 'width_ratio'):
+                bw = int(w * sel.width_ratio)
+                bh = int(h * sel.height_ratio)
+            else:
+                bw, bh = 150, 40
+
+            bx = int((w - bw) * sel.x_ratio)
+            by = int((h - bh) * sel.y_ratio)
+
+            # Smooth cyan rectangle
+            draw.rectangle([bx, by, bx + bw, by + bh], outline="#89B4FA", width=2)
+            # Corner handle dots
+            r = 6
+            draw.ellipse([bx - r, by - r, bx + r, by + r], fill="#F5E0DC", outline="#89B4FA")
+            draw.ellipse([bx + bw - r, by - r, bx + bw + r, by + r], fill="#F5E0DC", outline="#89B4FA")
+            draw.ellipse([bx - r, by + bh - r, bx + r, by + bh + r], fill="#F5E0DC", outline="#89B4FA")
+            draw.ellipse([bx + bw - r, by + bh - r, bx + bw + r, by + bh + r], fill="#F5E0DC", outline="#89B4FA")
+
+        frame_rgb = np.array(pil_img)
 
         q_img = QImage(frame_rgb.data, w, h, ch * w, QImage.Format.Format_RGB888)
 
@@ -338,27 +367,30 @@ class VideoPreviewWidget(QWidget):
         if event.button() != Qt.MouseButton.LeftButton or not self.video_info:
             return
 
-        active_subs = [s for s in self.subtitles if s.is_visible_at(self.current_sec)]
-        active_imgs = [img for img in getattr(self, 'image_clips', []) if img.is_visible_at(self.current_sec)]
-        active_vids = [v for v in getattr(self, 'video_clips', []) if v.is_visible_at(self.current_sec)]
-
-        if not (active_subs or active_imgs or active_vids):
-            return
-
         lbl_pos = self.video_label.mapFrom(self, event.position().toPoint())
         lbl_w, lbl_h = max(1, self.video_label.width()), max(1, self.video_label.height())
 
-        if 0 <= lbl_pos.x() <= lbl_w and 0 <= lbl_pos.y() <= lbl_h:
-            if active_imgs:
-                self._dragged_item = active_imgs[-1]
-            elif active_vids:
-                self._dragged_item = active_vids[-1]
-            elif active_subs:
-                self._dragged_item = active_subs[-1]
+        # Only drag item that is currently selected in timeline
+        sel = getattr(self, 'selected_item', None)
+        if sel and hasattr(sel, 'is_visible_at') and sel.is_visible_at(self.current_sec):
+            self._dragged_item = sel
+            self._is_resizing = False
 
-            if getattr(self, '_dragged_item', None):
-                self._dragged_item.x_ratio = max(0.0, min(1.0, lbl_pos.x() / float(lbl_w)))
-                self._dragged_item.y_ratio = max(0.0, min(1.0, lbl_pos.y() / float(lbl_h)))
+            # Check if clicked near bottom-right corner handle for resizing
+            if hasattr(sel, 'width_ratio'):
+                bw = int(lbl_w * sel.width_ratio)
+                bh = int(lbl_h * sel.height_ratio)
+            else:
+                bw, bh = 150, 40
+
+            bx = int((lbl_w - bw) * sel.x_ratio)
+            by = int((lbl_h - bh) * sel.y_ratio)
+
+            if abs(lbl_pos.x() - (bx + bw)) <= 20 and abs(lbl_pos.y() - (by + bh)) <= 20:
+                self._is_resizing = True
+            else:
+                sel.x_ratio = max(0.0, min(1.0, lbl_pos.x() / float(lbl_w)))
+                sel.y_ratio = max(0.0, min(1.0, lbl_pos.y() / float(lbl_h)))
 
     def mouseMoveEvent(self, event):
         super().mouseMoveEvent(event)
@@ -367,8 +399,23 @@ class VideoPreviewWidget(QWidget):
             lbl_pos = self.video_label.mapFrom(self, event.position().toPoint())
             lbl_w = max(1, self.video_label.width())
             lbl_h = max(1, self.video_label.height())
-            item.x_ratio = max(0.0, min(1.0, lbl_pos.x() / float(lbl_w)))
-            item.y_ratio = max(0.0, min(1.0, lbl_pos.y() / float(lbl_h)))
+
+            if getattr(self, '_is_resizing', False):
+                bx = int((lbl_w - max(30, int(lbl_w * getattr(item, 'width_ratio', 0.2)))) * item.x_ratio)
+                by = int((lbl_h - max(30, int(lbl_h * getattr(item, 'height_ratio', 0.2)))) * item.y_ratio)
+
+                new_w = max(30, lbl_pos.x() - bx)
+                new_h = max(30, lbl_pos.y() - by)
+
+                if hasattr(item, 'width_ratio'):
+                    item.width_ratio = round(max(0.05, min(1.0, new_w / float(lbl_w))), 3)
+                    item.height_ratio = round(max(0.05, min(1.0, new_h / float(lbl_h))), 3)
+                elif hasattr(item, 'font_size'):
+                    item.font_size = max(10, min(200, int(new_h * 0.8)))
+            else:
+                item.x_ratio = max(0.0, min(1.0, lbl_pos.x() / float(lbl_w)))
+                item.y_ratio = max(0.0, min(1.0, lbl_pos.y() / float(lbl_h)))
+
             if not getattr(self, '_is_rendering', False):
                 self._is_rendering = True
                 try:
