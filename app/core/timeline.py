@@ -43,6 +43,18 @@ class TimelineTextClip:
 
         self.keyframe_nodes = []
 
+        # Photoshop Effects & Layer Styles
+        self.opacity = 1.0
+        self.fade_in_sec = 0.0
+        self.fade_out_sec = 0.0
+        self.blend_mode = "Normal"
+        self.filter_type = "Normal"
+        self.brightness = 1.0
+        self.contrast = 1.0
+        self.saturation = 1.0
+        self.blur_radius = 0.0
+        self.drop_shadow = True
+
     @property
     def duration(self) -> float:
         return max(0.1, self.end_sec - self.start_sec)
@@ -141,6 +153,18 @@ class TimelineImageClip:
 
         self.keyframe_nodes = []
 
+        # Photoshop Effects & Layer Styles
+        self.opacity = 1.0
+        self.fade_in_sec = 0.0
+        self.fade_out_sec = 0.0
+        self.blend_mode = "Normal"
+        self.filter_type = "Normal"
+        self.brightness = 1.0
+        self.contrast = 1.0
+        self.saturation = 1.0
+        self.blur_radius = 0.0
+        self.drop_shadow = False
+
     @property
     def duration(self) -> float:
         return max(0.1, self.end_sec - self.start_sec)
@@ -236,6 +260,18 @@ class TimelineVideoClip:
         self.end_height_ratio = self.height_ratio
 
         self.keyframe_nodes = []
+
+        # Photoshop Effects & Layer Styles
+        self.opacity = 1.0
+        self.fade_in_sec = 0.0
+        self.fade_out_sec = 0.0
+        self.blend_mode = "Normal"
+        self.filter_type = "Normal"
+        self.brightness = 1.0
+        self.contrast = 1.0
+        self.saturation = 1.0
+        self.blur_radius = 0.0
+        self.drop_shadow = False
 
     @property
     def duration(self) -> float:

@@ -2,12 +2,14 @@ import os
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QDoubleSpinBox, QSpinBox, QLineEdit, QComboBox, QGroupBox,
-    QFileDialog, QColorDialog, QMessageBox
+    QFileDialog, QColorDialog, QMessageBox, QScrollArea, QFrame,
+    QTabWidget, QSlider, QCheckBox
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QRect, QPoint
 from PyQt6.QtGui import QPainter, QColor, QPen, QFont, QBrush, QMouseEvent, QWheelEvent, QKeyEvent
 
 from app.core.timeline import SpeedInterval, TimelineTextClip, TimelineImageClip, TimelineVideoClip
+from app.core.photoshop_fx import PhotoshopFX
 
 
 class TimelineCanvas(QWidget):
@@ -61,6 +63,8 @@ class TimelineCanvas(QWidget):
         self._drag_start_x = 0
         self._drag_orig_start = 0.0
         self._drag_orig_end = 0.0
+        self._active_snap_x = None
+        self._snap_threshold_pixels = 12
         self._update_height()
 
     def _get_track_layout(self):
@@ -310,6 +314,19 @@ class TimelineCanvas(QWidget):
             points = [QPoint(int(px) - 5, 0), QPoint(int(px) + 5, 0), QPoint(int(px) + 5, 8), QPoint(int(px), 14), QPoint(int(px) - 5, 8)]
             painter.drawPolygon(points)
 
+        # Draw Photoshop Magnetic Snap Guide Line & Badge (Línea de Imán inteligente)
+        if getattr(self, '_active_snap_x', None) is not None:
+            snap_x = int(self._active_snap_x)
+            if 115 <= snap_x <= w:
+                painter.setPen(QPen(QColor("#F9E2AF"), 2, Qt.PenStyle.DashLine))
+                painter.drawLine(snap_x, 0, snap_x, h)
+                badge_rect = QRect(snap_x - 22, 2, 44, 16)
+                painter.setPen(QColor("#11111B"))
+                painter.setBrush(QBrush(QColor("#F9E2AF")))
+                painter.drawRoundedRect(badge_rect, 4, 4)
+                painter.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
+                painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, "🧲 IMÁN")
+
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.MouseButton.LeftButton:
             x, y = event.position().x(), event.position().y()
@@ -404,18 +421,79 @@ class TimelineCanvas(QWidget):
             dx_pixels = x - self._drag_start_x
             sec_per_pixel = (self.duration / max(10, (self.width() - 130) * self.zoom_level))
             d_sec = dx_pixels * sec_per_pixel
+            threshold_sec = self._snap_threshold_pixels * sec_per_pixel
+
+            # Collect magnetic snap candidates across timeline
+            snap_candidates = [0.0, self.duration, self.current_sec]
+            for it in self.intervals:
+                if it != self._dragged_item:
+                    snap_candidates.extend([it.start_sec, it.end_sec])
+            for tc in self.text_clips:
+                if tc != self._dragged_item:
+                    snap_candidates.extend([tc.start_sec, tc.end_sec])
+            for ic in self.image_clips:
+                if ic != self._dragged_item:
+                    snap_candidates.extend([ic.start_sec, ic.end_sec])
+            for vc in self.video_clips:
+                if vc != self._dragged_item:
+                    snap_candidates.extend([vc.start_sec, vc.end_sec])
+
+            def check_snap(target_val):
+                best_dist = threshold_sec
+                best_cand = None
+                for cand in snap_candidates:
+                    dist = abs(target_val - cand)
+                    if dist < best_dist:
+                        best_dist = dist
+                        best_cand = cand
+                return best_cand
+
+            snapped_pos = None
 
             if self._is_dragging_left_handle:
-                new_start = max(0.0, min(self._drag_orig_end - 0.1, self._drag_orig_start + d_sec))
+                raw_start = max(0.0, min(self._drag_orig_end - 0.1, self._drag_orig_start + d_sec))
+                cand = check_snap(raw_start)
+                if cand is not None and cand < self._drag_orig_end - 0.05:
+                    new_start = cand
+                    snapped_pos = cand
+                else:
+                    new_start = raw_start
                 self._dragged_item.start_sec = round(new_start, 2)
+
             elif self._is_dragging_right_handle:
-                new_end = max(self._drag_orig_start + 0.1, min(self.duration, self._drag_orig_end + d_sec))
+                raw_end = max(self._drag_orig_start + 0.1, min(self.duration, self._drag_orig_end + d_sec))
+                cand = check_snap(raw_end)
+                if cand is not None and cand > self._drag_orig_start + 0.05:
+                    new_end = cand
+                    snapped_pos = cand
+                else:
+                    new_end = raw_end
                 self._dragged_item.end_sec = round(new_end, 2)
+
             elif self._is_dragging_block:
                 dur = self._drag_orig_end - self._drag_orig_start
-                new_start = max(0.0, min(self.duration - dur, self._drag_orig_start + d_sec))
+                raw_start = max(0.0, min(self.duration - dur, self._drag_orig_start + d_sec))
+                raw_end = raw_start + dur
+
+                cand_start = check_snap(raw_start)
+                cand_end = check_snap(raw_end)
+
+                if cand_start is not None:
+                    new_start = max(0.0, min(self.duration - dur, cand_start))
+                    snapped_pos = new_start
+                elif cand_end is not None:
+                    new_start = max(0.0, min(self.duration - dur, cand_end - dur))
+                    snapped_pos = cand_end
+                else:
+                    new_start = raw_start
+
                 self._dragged_item.start_sec = round(new_start, 2)
                 self._dragged_item.end_sec = round(new_start + dur, 2)
+
+            if snapped_pos is not None:
+                self._active_snap_x = self._sec_to_x(snapped_pos)
+            else:
+                self._active_snap_x = None
 
             self.update()
             self.timeline_changed.emit()
@@ -426,6 +504,8 @@ class TimelineCanvas(QWidget):
         self._is_dragging_left_handle = False
         self._is_dragging_right_handle = False
         self._dragged_item = None
+        self._active_snap_x = None
+        self.update()
 
 
 class TimelineWidget(QWidget):
@@ -484,7 +564,7 @@ class TimelineWidget(QWidget):
 
         layout.addLayout(toolbar)
 
-        # Canvas
+        # Canvas inside styled ScrollArea (Permite infinitas pistas con scroll vertical fluido)
         self.canvas = TimelineCanvas(self)
         self.canvas.playhead_moved.connect(self.playhead_moved.emit)
         self.canvas.interval_selected.connect(self._on_interval_selected)
@@ -492,7 +572,41 @@ class TimelineWidget(QWidget):
         self.canvas.image_clip_selected.connect(self._on_image_clip_selected)
         self.canvas.video_clip_selected.connect(self._on_video_clip_selected)
         self.canvas.timeline_changed.connect(self.timeline_updated.emit)
-        layout.addWidget(self.canvas)
+
+        self.canvas_scroll = QScrollArea(self)
+        self.canvas_scroll.setWidget(self.canvas)
+        self.canvas_scroll.setWidgetResizable(True)
+        self.canvas_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.canvas_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.canvas_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.canvas_scroll.setStyleSheet("""
+            QScrollArea { background-color: #181825; border: 1px solid #313244; border-radius: 6px; }
+            QScrollBar:vertical {
+                border: none; background: #181825; width: 10px; margin: 0px;
+            }
+            QScrollBar::handle:vertical {
+                background: #45475A; min-height: 25px; border-radius: 5px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #89B4FA;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+            QScrollBar:horizontal {
+                border: none; background: #181825; height: 10px; margin: 0px;
+            }
+            QScrollBar::handle:horizontal {
+                background: #45475A; min-width: 25px; border-radius: 5px;
+            }
+            QScrollBar::handle:horizontal:hover {
+                background: #89B4FA;
+            }
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+                width: 0px;
+            }
+        """)
+        layout.addWidget(self.canvas_scroll)
 
         # Inspector
         self.inspector_group = QGroupBox("Inspector de Propiedades del Clip", self)
@@ -880,84 +994,196 @@ class TimelineWidget(QWidget):
 from PyQt6.QtWidgets import QDialog, QFormLayout, QDialogButtonBox
 
 class ClipInspectorDialog(QDialog):
-    """Diálogo emergente para editar los atributos de cualquier elemento seleccionado con doble clic (Texto, Imagen, Vídeo PIP)."""
+    """Diálogo avanzado estilo Photoshop con pestañas de Transformación y Efectos Visuales FX."""
     def __init__(self, clip, parent=None):
         super().__init__(parent)
         self.clip = clip
-        self.setWindowTitle(f"Editar Atributos - {self._get_title()}")
-        self.setFixedWidth(440)
+        self.setWindowTitle(f"Inspector de Clip - {self._get_title()}")
+        self.setFixedWidth(480)
         self.setStyleSheet("""
             QDialog { background-color: #1E1E2E; color: #CDD6F4; font-family: 'Segoe UI', sans-serif; }
-            QLabel { color: #BAC2DE; font-size: 13px; font-weight: bold; }
-            QLineEdit, QSpinBox, QDoubleSpinBox { background-color: #313244; color: #CDD6F4; border: 1px solid #45475A; border-radius: 4px; padding: 6px; }
-            QPushButton { background-color: #89B4FA; color: #11111B; font-weight: bold; border-radius: 4px; padding: 8px 14px; }
+            QLabel { color: #BAC2DE; font-size: 12px; font-weight: bold; }
+            QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox { background-color: #313244; color: #CDD6F4; border: 1px solid #45475A; border-radius: 4px; padding: 5px; }
+            QTabWidget::pane { border: 1px solid #45475A; background-color: #181825; border-radius: 6px; padding: 10px; }
+            QTabBar::tab { background-color: #313244; color: #BAC2DE; padding: 8px 16px; border-top-left-radius: 6px; border-top-right-radius: 6px; margin-right: 2px; font-weight: bold; }
+            QTabBar::tab:selected { background-color: #181825; color: #89B4FA; border: 1px solid #45475A; border-bottom: none; }
+            QPushButton { background-color: #89B4FA; color: #11111B; font-weight: bold; border-radius: 4px; padding: 6px 12px; }
             QPushButton:hover { background-color: #B4BEFE; }
+            QCheckBox { color: #CDD6F4; font-weight: bold; spacing: 8px; }
+            QSlider::groove:horizontal { height: 6px; background: #313244; border-radius: 3px; }
+            QSlider::handle:horizontal { background: #89B4FA; width: 14px; margin: -4px 0; border-radius: 7px; }
         """)
 
-        layout = QVBoxLayout(self)
-        form = QFormLayout()
-        form.setSpacing(12)
+        main_layout = QVBoxLayout(self)
 
-        # Tiempos de inicio y fin
-        self.spn_start = QDoubleSpinBox(self)
-        self.spn_start.setRange(0.0, 3600.0)
+        tabs = QTabWidget(self)
+
+        # TAB 1: 📐 Transformación & Tiempo
+        tab_trans = QWidget()
+        form_trans = QFormLayout(tab_trans)
+        form_trans.setSpacing(10)
+
+        self.spn_start = QDoubleSpinBox(tab_trans)
+        self.spn_start.setRange(0.0, 7200.0)
         self.spn_start.setValue(clip.start_sec)
         self.spn_start.setSuffix(" s")
 
-        self.spn_end = QDoubleSpinBox(self)
-        self.spn_end.setRange(0.1, 3600.0)
+        self.spn_end = QDoubleSpinBox(tab_trans)
+        self.spn_end.setRange(0.1, 7200.0)
         self.spn_end.setValue(clip.end_sec)
         self.spn_end.setSuffix(" s")
 
-        form.addRow("Tiempo Inicio:", self.spn_start)
-        form.addRow("Tiempo Fin:", self.spn_end)
+        form_trans.addRow("Tiempo Inicio:", self.spn_start)
+        form_trans.addRow("Tiempo Fin:", self.spn_end)
 
         if isinstance(clip, TimelineTextClip):
-            self.txt_content = QLineEdit(clip.text, self)
-            self.spn_font_size = QSpinBox(self)
+            self.txt_content = QLineEdit(clip.text, tab_trans)
+            self.spn_font_size = QSpinBox(tab_trans)
             self.spn_font_size.setRange(10, 250)
             self.spn_font_size.setValue(clip.font_size)
 
             self.color_fill = getattr(clip, 'color', '#FFFFFF')
             self.color_border = getattr(clip, 'border_color', '#000000')
 
-            self.btn_fill = QPushButton(f"Relleno: {self.color_fill}", self)
+            self.btn_fill = QPushButton(f"Relleno: {self.color_fill}", tab_trans)
             self.btn_fill.clicked.connect(self._pick_fill_color)
 
-            self.btn_border = QPushButton(f"Borde: {self.color_border}", self)
+            self.btn_border = QPushButton(f"Borde: {self.color_border}", tab_trans)
             self.btn_border.clicked.connect(self._pick_border_color)
 
-            form.addRow("Texto:", self.txt_content)
-            form.addRow("Tamaño Letra (pt):", self.spn_font_size)
-            form.addRow("Color Relleno:", self.btn_fill)
-            form.addRow("Color Borde:", self.btn_border)
+            form_trans.addRow("Texto:", self.txt_content)
+            form_trans.addRow("Tamaño Letra (pt):", self.spn_font_size)
+            form_trans.addRow("Color Relleno:", self.btn_fill)
+            form_trans.addRow("Color Borde:", self.btn_border)
 
         elif isinstance(clip, (TimelineImageClip, TimelineVideoClip)):
-            self.spn_width_pct = QSpinBox(self)
+            self.spn_width_pct = QSpinBox(tab_trans)
             self.spn_width_pct.setRange(5, 100)
             self.spn_width_pct.setValue(int(clip.width_ratio * 100))
             self.spn_width_pct.setSuffix(" %")
 
-            self.spn_height_pct = QSpinBox(self)
+            self.spn_height_pct = QSpinBox(tab_trans)
             self.spn_height_pct.setRange(5, 100)
             self.spn_height_pct.setValue(int(clip.height_ratio * 100))
             self.spn_height_pct.setSuffix(" %")
 
-            form.addRow("Ancho (% Pantalla):", self.spn_width_pct)
-            form.addRow("Alto (% Pantalla):", self.spn_height_pct)
+            form_trans.addRow("Ancho (% Pantalla):", self.spn_width_pct)
+            form_trans.addRow("Alto (% Pantalla):", self.spn_height_pct)
 
             if isinstance(clip, TimelineVideoClip):
-                self.spn_speed = QDoubleSpinBox(self)
+                self.spn_speed = QDoubleSpinBox(tab_trans)
                 self.spn_speed.setRange(0.1, 10.0)
                 self.spn_speed.setValue(clip.speed)
-                form.addRow("Velocidad de Vídeo:", self.spn_speed)
+                form_trans.addRow("Velocidad de Vídeo:", self.spn_speed)
 
-        layout.addLayout(form)
+        tabs.addTab(tab_trans, "📐 Transformación & Tiempo")
+
+        # TAB 2: 🎨 Photoshop FX & Estilos
+        tab_fx = QWidget()
+        form_fx = QFormLayout(tab_fx)
+        form_fx.setSpacing(10)
+
+        # Blend Mode
+        self.combo_blend = QComboBox(tab_fx)
+        self.combo_blend.addItems(PhotoshopFX.BLEND_MODES)
+        cur_blend = getattr(clip, 'blend_mode', 'Normal')
+        idx = self.combo_blend.findText(cur_blend, Qt.MatchFlag.MatchContains)
+        if idx >= 0: self.combo_blend.setCurrentIndex(idx)
+        form_fx.addRow("Modo de Fusión (Blend):", self.combo_blend)
+
+        # Opacity Slider + SpinBox
+        op_hlayout = QHBoxLayout()
+        self.slider_opacity = QSlider(Qt.Orientation.Horizontal, tab_fx)
+        self.slider_opacity.setRange(0, 100)
+        self.slider_opacity.setValue(int(getattr(clip, 'opacity', 1.0) * 100))
+        self.spn_opacity = QSpinBox(tab_fx)
+        self.spn_opacity.setRange(0, 100)
+        self.spn_opacity.setValue(self.slider_opacity.value())
+        self.spn_opacity.setSuffix(" %")
+        self.slider_opacity.valueChanged.connect(self.spn_opacity.setValue)
+        self.spn_opacity.valueChanged.connect(self.slider_opacity.setValue)
+        op_hlayout.addWidget(self.slider_opacity)
+        op_hlayout.addWidget(self.spn_opacity)
+        form_fx.addRow("Opacidad General:", op_hlayout)
+
+        # Fade In & Fade Out
+        self.spn_fade_in = QDoubleSpinBox(tab_fx)
+        self.spn_fade_in.setRange(0.0, 5.0)
+        self.spn_fade_in.setSingleStep(0.2)
+        self.spn_fade_in.setSuffix(" s")
+        self.spn_fade_in.setValue(getattr(clip, 'fade_in_sec', 0.0))
+
+        self.spn_fade_out = QDoubleSpinBox(tab_fx)
+        self.spn_fade_out.setRange(0.0, 5.0)
+        self.spn_fade_out.setSingleStep(0.2)
+        self.spn_fade_out.setSuffix(" s")
+        self.spn_fade_out.setValue(getattr(clip, 'fade_out_sec', 0.0))
+
+        fade_hlayout = QHBoxLayout()
+        fade_hlayout.addWidget(QLabel("Entrada:", tab_fx))
+        fade_hlayout.addWidget(self.spn_fade_in)
+        fade_hlayout.addWidget(QLabel("Salida:", tab_fx))
+        fade_hlayout.addWidget(self.spn_fade_out)
+        form_fx.addRow("Desvanecimiento Suave:", fade_hlayout)
+
+        # Filters / LUTs
+        self.combo_filter = QComboBox(tab_fx)
+        self.combo_filter.addItems(PhotoshopFX.FILTERS)
+        cur_filter = getattr(clip, 'filter_type', 'Normal')
+        f_idx = self.combo_filter.findText(cur_filter, Qt.MatchFlag.MatchContains)
+        if f_idx >= 0: self.combo_filter.setCurrentIndex(f_idx)
+        form_fx.addRow("Filtro de Capa / Tono:", self.combo_filter)
+
+        # Brightness & Contrast
+        self.spn_brightness = QDoubleSpinBox(tab_fx)
+        self.spn_brightness.setRange(0.2, 2.5)
+        self.spn_brightness.setSingleStep(0.1)
+        self.spn_brightness.setValue(getattr(clip, 'brightness', 1.0))
+
+        self.spn_contrast = QDoubleSpinBox(tab_fx)
+        self.spn_contrast.setRange(0.2, 2.5)
+        self.spn_contrast.setSingleStep(0.1)
+        self.spn_contrast.setValue(getattr(clip, 'contrast', 1.0))
+
+        bc_hlayout = QHBoxLayout()
+        bc_hlayout.addWidget(QLabel("Brillo:", tab_fx))
+        bc_hlayout.addWidget(self.spn_brightness)
+        bc_hlayout.addWidget(QLabel("Contraste:", tab_fx))
+        bc_hlayout.addWidget(self.spn_contrast)
+        form_fx.addRow("Ajuste Tonal:", bc_hlayout)
+
+        # Saturation & Blur
+        self.spn_saturation = QDoubleSpinBox(tab_fx)
+        self.spn_saturation.setRange(0.0, 3.0)
+        self.spn_saturation.setSingleStep(0.1)
+        self.spn_saturation.setValue(getattr(clip, 'saturation', 1.0))
+
+        self.spn_blur = QDoubleSpinBox(tab_fx)
+        self.spn_blur.setRange(0.0, 15.0)
+        self.spn_blur.setSingleStep(0.5)
+        self.spn_blur.setSuffix(" px")
+        self.spn_blur.setValue(getattr(clip, 'blur_radius', 0.0))
+
+        sat_hlayout = QHBoxLayout()
+        sat_hlayout.addWidget(QLabel("Saturación:", tab_fx))
+        sat_hlayout.addWidget(self.spn_saturation)
+        sat_hlayout.addWidget(QLabel("Desenfoque:", tab_fx))
+        sat_hlayout.addWidget(self.spn_blur)
+        form_fx.addRow("Color y Enfoque:", sat_hlayout)
+
+        # Drop Shadow
+        self.chk_shadow = QCheckBox("Activar Sombra Paralela (Drop Shadow)", tab_fx)
+        self.chk_shadow.setChecked(getattr(clip, 'drop_shadow', isinstance(clip, TimelineTextClip)))
+        form_fx.addRow("Estilo de Capa:", self.chk_shadow)
+
+        tabs.addTab(tab_fx, "🎨 Photoshop FX & Estilos")
+
+        main_layout.addWidget(tabs)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel, self)
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        main_layout.addWidget(buttons)
 
     def _get_title(self):
         if isinstance(self.clip, TimelineTextClip): return "Texto / Subtítulo"
@@ -981,6 +1207,7 @@ class ClipInspectorDialog(QDialog):
         self.clip.start_sec = self.spn_start.value()
         self.clip.end_sec = max(self.clip.start_sec + 0.1, self.spn_end.value())
 
+        # Save Tab 1 (Transformation)
         if isinstance(self.clip, TimelineTextClip):
             self.clip.text = self.txt_content.text()
             self.clip.font_size = self.spn_font_size.value()
@@ -991,5 +1218,17 @@ class ClipInspectorDialog(QDialog):
             self.clip.height_ratio = self.spn_height_pct.value() / 100.0
             if isinstance(self.clip, TimelineVideoClip):
                 self.clip.speed = self.spn_speed.value()
+
+        # Save Tab 2 (Photoshop FX)
+        self.clip.blend_mode = self.combo_blend.currentText()
+        self.clip.opacity = self.spn_opacity.value() / 100.0
+        self.clip.fade_in_sec = self.spn_fade_in.value()
+        self.clip.fade_out_sec = self.spn_fade_out.value()
+        self.clip.filter_type = self.combo_filter.currentText()
+        self.clip.brightness = self.spn_brightness.value()
+        self.clip.contrast = self.spn_contrast.value()
+        self.clip.saturation = self.spn_saturation.value()
+        self.clip.blur_radius = self.spn_blur.value()
+        self.clip.drop_shadow = self.chk_shadow.isChecked()
 
         self.accept()

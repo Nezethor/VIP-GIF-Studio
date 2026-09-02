@@ -1,10 +1,11 @@
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QFrame, QDoubleSpinBox
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QImage, QPixmap
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 import cv2
 import os
 import numpy as np
+from app.core.photoshop_fx import PhotoshopFX
 
 from app.core.video_info import VideoInfo
 from app.gui.range_slider import DualRangeSlider
@@ -320,13 +321,38 @@ class VideoPreviewWidget(QWidget):
                             target_h = max(30, int(h * cur_h))
                             pip_resized = cv2.resize(pip_rgb, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
 
+                            # Photoshop FX on PIP Video
+                            pip_pil = Image.fromarray(pip_resized).convert("RGBA")
+                            pip_fx = PhotoshopFX.apply_adjustments(
+                                pip_pil,
+                                filter_type=getattr(v_clip, 'filter_type', 'Normal'),
+                                brightness=getattr(v_clip, 'brightness', 1.0),
+                                contrast=getattr(v_clip, 'contrast', 1.0),
+                                saturation=getattr(v_clip, 'saturation', 1.0),
+                                blur_radius=getattr(v_clip, 'blur_radius', 0.0)
+                            )
+                            v_op = PhotoshopFX.compute_opacity_with_fade(
+                                self.current_sec, v_clip.start_sec, v_clip.end_sec,
+                                base_opacity=getattr(v_clip, 'opacity', 1.0),
+                                fade_in_sec=getattr(v_clip, 'fade_in_sec', 0.0),
+                                fade_out_sec=getattr(v_clip, 'fade_out_sec', 0.0)
+                            )
                             pos_x = int((w - target_w) * cur_x)
                             pos_y = int((h - target_h) * cur_y)
 
-                            px1, py1 = max(0, pos_x), max(0, pos_y)
-                            px2, py2 = min(w, pos_x + target_w), min(h, pos_y + target_h)
+                            # Render PIP onto base frame with blend mode
+                            bg_temp = Image.fromarray(frame_rgb).convert("RGBA")
+                            if getattr(v_clip, 'drop_shadow', False):
+                                s_box = Image.new("RGBA", (target_w, target_h), (0, 0, 0, int(140 * v_op)))
+                                s_box = s_box.filter(ImageFilter.GaussianBlur(4))
+                                bg_temp.paste(s_box, (pos_x + 6, pos_y + 6), s_box)
 
-                            frame_rgb[py1:py2, px1:px2] = pip_resized[0:(py2-py1), 0:(px2-px1)]
+                            bg_temp = PhotoshopFX.apply_blend_composite(
+                                bg_temp, pip_fx, (pos_x, pos_y),
+                                blend_mode=getattr(v_clip, 'blend_mode', 'Normal'),
+                                opacity=v_op
+                            )
+                            frame_rgb = np.array(bg_temp.convert("RGB"))
                     except Exception:
                         pass
 
@@ -337,10 +363,10 @@ class VideoPreviewWidget(QWidget):
         has_sel = sel and hasattr(sel, 'is_visible_at') and sel.is_visible_at(self.current_sec)
 
         if active_imgs or active_subs or has_sel:
-            pil_img = Image.fromarray(frame_rgb)
+            pil_img = Image.fromarray(frame_rgb).convert("RGBA")
             draw = ImageDraw.Draw(pil_img)
 
-            # 2. Draw active image overlays onto frame
+            # 2. Draw active image overlays onto frame with Photoshop FX
             for img_clip in active_imgs:
                 cur_x, cur_y, cur_w, cur_h, _ = img_clip.get_transform_at(self.current_sec) if hasattr(img_clip, 'get_transform_at') else (img_clip.x_ratio, img_clip.y_ratio, img_clip.width_ratio, img_clip.height_ratio, 40)
                 target_w = max(20, int(w * cur_w))
@@ -350,9 +376,35 @@ class VideoPreviewWidget(QWidget):
                 if overlay_img is not None:
                     pos_x = int((w - target_w) * cur_x)
                     pos_y = int((h - target_h) * cur_y)
-                    pil_img.paste(overlay_img, (pos_x, pos_y), overlay_img)
 
-            # 3. Draw active subtitles/texts onto frame
+                    img_fx = PhotoshopFX.apply_adjustments(
+                        overlay_img,
+                        filter_type=getattr(img_clip, 'filter_type', 'Normal'),
+                        brightness=getattr(img_clip, 'brightness', 1.0),
+                        contrast=getattr(img_clip, 'contrast', 1.0),
+                        saturation=getattr(img_clip, 'saturation', 1.0),
+                        blur_radius=getattr(img_clip, 'blur_radius', 0.0)
+                    )
+                    img_op = PhotoshopFX.compute_opacity_with_fade(
+                        self.current_sec, img_clip.start_sec, img_clip.end_sec,
+                        base_opacity=getattr(img_clip, 'opacity', 1.0),
+                        fade_in_sec=getattr(img_clip, 'fade_in_sec', 0.0),
+                        fade_out_sec=getattr(img_clip, 'fade_out_sec', 0.0)
+                    )
+
+                    # Drop shadow
+                    if getattr(img_clip, 'drop_shadow', False):
+                        s_box = Image.new("RGBA", (target_w, target_h), (0, 0, 0, int(150 * img_op)))
+                        s_box = s_box.filter(ImageFilter.GaussianBlur(5))
+                        pil_img.paste(s_box, (pos_x + 6, pos_y + 6), s_box)
+
+                    pil_img = PhotoshopFX.apply_blend_composite(
+                        pil_img, img_fx, (pos_x, pos_y),
+                        blend_mode=getattr(img_clip, 'blend_mode', 'Normal'),
+                        opacity=img_op
+                    )
+
+            # 3. Draw active subtitles/texts onto frame with Photoshop FX
             for sub in active_subs:
                 cur_x, cur_y, _, _, cur_fs = sub.get_transform_at(self.current_sec) if hasattr(sub, 'get_transform_at') else (sub.x_ratio, sub.y_ratio, 0.3, 0.3, sub.font_size)
                 ref_h = 720.0
@@ -366,13 +418,26 @@ class VideoPreviewWidget(QWidget):
                 x = int((w - text_w) * cur_x)
                 y = int((h - text_h) * cur_y)
 
-                ox, oy = max(1, int(scaled_size / 14)), max(1, int(scaled_size / 14))
-                draw.text((x-ox, y), sub.text, font=font, fill=sub.border_color)
-                draw.text((x+ox, y), sub.text, font=font, fill=sub.border_color)
-                draw.text((x, y-oy), sub.text, font=font, fill=sub.border_color)
-                draw.text((x, y+oy), sub.text, font=font, fill=sub.border_color)
+                t_op = PhotoshopFX.compute_opacity_with_fade(
+                    self.current_sec, sub.start_sec, sub.end_sec,
+                    base_opacity=getattr(sub, 'opacity', 1.0),
+                    fade_in_sec=getattr(sub, 'fade_in_sec', 0.0),
+                    fade_out_sec=getattr(sub, 'fade_out_sec', 0.0)
+                )
 
-                draw.text((x, y), sub.text, font=font, fill=sub.color)
+                # Soft Drop Shadow
+                if getattr(sub, 'drop_shadow', True) and t_op > 0.05:
+                    draw.text((x + 4, y + 4), sub.text, font=font, fill=(0, 0, 0, int(160 * t_op)))
+
+                ox, oy = max(1, int(scaled_size / 14)), max(1, int(scaled_size / 14))
+                b_col = sub.border_color
+                f_col = sub.color
+                draw.text((x-ox, y), sub.text, font=font, fill=b_col)
+                draw.text((x+ox, y), sub.text, font=font, fill=b_col)
+                draw.text((x, y-oy), sub.text, font=font, fill=b_col)
+                draw.text((x, y+oy), sub.text, font=font, fill=b_col)
+
+                draw.text((x, y), sub.text, font=font, fill=f_col)
 
             # 4. Draw smooth bounding box with corner handles around selected item
             if has_sel:

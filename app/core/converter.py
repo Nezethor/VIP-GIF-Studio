@@ -83,12 +83,13 @@ class MediaConverterWorker(QThread):
         """
         import cv2
         import numpy as np
-        from PIL import Image, ImageDraw, ImageFont
+        from PIL import Image, ImageDraw, ImageFont, ImageFilter
+        from app.core.photoshop_fx import PhotoshopFX
 
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         h, w, _ = frame_rgb.shape
 
-        # 1. PIP Video Overlay Clips
+        # 1. PIP Video Overlay Clips with Photoshop FX
         for v_clip in getattr(self, 'video_clips', []):
             if v_clip.is_visible_at(current_sec) and os.path.exists(v_clip.video_path):
                 try:
@@ -113,20 +114,44 @@ class MediaConverterWorker(QThread):
                         target_h = max(30, int(h * cur_h))
                         pip_resized = cv2.resize(pip_rgb, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
 
+                        # Apply Photoshop FX
+                        pip_pil = Image.fromarray(pip_resized).convert("RGBA")
+                        pip_fx = PhotoshopFX.apply_adjustments(
+                            pip_pil,
+                            filter_type=getattr(v_clip, 'filter_type', 'Normal'),
+                            brightness=getattr(v_clip, 'brightness', 1.0),
+                            contrast=getattr(v_clip, 'contrast', 1.0),
+                            saturation=getattr(v_clip, 'saturation', 1.0),
+                            blur_radius=getattr(v_clip, 'blur_radius', 0.0)
+                        )
+                        v_op = PhotoshopFX.compute_opacity_with_fade(
+                            current_sec, v_clip.start_sec, v_clip.end_sec,
+                            base_opacity=getattr(v_clip, 'opacity', 1.0),
+                            fade_in_sec=getattr(v_clip, 'fade_in_sec', 0.0),
+                            fade_out_sec=getattr(v_clip, 'fade_out_sec', 0.0)
+                        )
                         pos_x = int((w - target_w) * cur_x)
                         pos_y = int((h - target_h) * cur_y)
 
-                        px1, py1 = max(0, pos_x), max(0, pos_y)
-                        px2, py2 = min(w, pos_x + target_w), min(h, pos_y + target_h)
+                        bg_temp = Image.fromarray(frame_rgb).convert("RGBA")
+                        if getattr(v_clip, 'drop_shadow', False):
+                            s_box = Image.new("RGBA", (target_w, target_h), (0, 0, 0, int(140 * v_op)))
+                            s_box = s_box.filter(ImageFilter.GaussianBlur(4))
+                            bg_temp.paste(s_box, (pos_x + 6, pos_y + 6), s_box)
 
-                        frame_rgb[py1:py2, px1:px2] = pip_resized[0:(py2-py1), 0:(px2-px1)]
+                        bg_temp = PhotoshopFX.apply_blend_composite(
+                            bg_temp, pip_fx, (pos_x, pos_y),
+                            blend_mode=getattr(v_clip, 'blend_mode', 'Normal'),
+                            opacity=v_op
+                        )
+                        frame_rgb = np.array(bg_temp.convert("RGB"))
                 except Exception:
                     pass
 
-        # 2. Image / Watermark Overlay Clips
+        # 2. Image / Watermark Overlay Clips with Photoshop FX
         active_imgs = [img for img in getattr(self, 'image_clips', []) if img.is_visible_at(current_sec)]
         if active_imgs:
-            pil_img = Image.fromarray(frame_rgb)
+            pil_img = Image.fromarray(frame_rgb).convert("RGBA")
             for img_clip in active_imgs:
                 if os.path.exists(img_clip.image_path):
                     try:
@@ -139,16 +164,40 @@ class MediaConverterWorker(QThread):
                         pos_x = int((w - target_w) * cur_x)
                         pos_y = int((h - target_h) * cur_y)
 
-                        pil_img.paste(overlay_img, (pos_x, pos_y), overlay_img)
+                        img_fx = PhotoshopFX.apply_adjustments(
+                            overlay_img,
+                            filter_type=getattr(img_clip, 'filter_type', 'Normal'),
+                            brightness=getattr(img_clip, 'brightness', 1.0),
+                            contrast=getattr(img_clip, 'contrast', 1.0),
+                            saturation=getattr(img_clip, 'saturation', 1.0),
+                            blur_radius=getattr(img_clip, 'blur_radius', 0.0)
+                        )
+                        img_op = PhotoshopFX.compute_opacity_with_fade(
+                            current_sec, img_clip.start_sec, img_clip.end_sec,
+                            base_opacity=getattr(img_clip, 'opacity', 1.0),
+                            fade_in_sec=getattr(img_clip, 'fade_in_sec', 0.0),
+                            fade_out_sec=getattr(img_clip, 'fade_out_sec', 0.0)
+                        )
+
+                        if getattr(img_clip, 'drop_shadow', False):
+                            s_box = Image.new("RGBA", (target_w, target_h), (0, 0, 0, int(150 * img_op)))
+                            s_box = s_box.filter(ImageFilter.GaussianBlur(5))
+                            pil_img.paste(s_box, (pos_x + 6, pos_y + 6), s_box)
+
+                        pil_img = PhotoshopFX.apply_blend_composite(
+                            pil_img, img_fx, (pos_x, pos_y),
+                            blend_mode=getattr(img_clip, 'blend_mode', 'Normal'),
+                            opacity=img_op
+                        )
                     except Exception:
                         pass
             frame_rgb = np.array(pil_img.convert("RGB"))
 
-        # 3. Text & Subtitle Overlay Clips
+        # 3. Text & Subtitle Overlay Clips with Photoshop FX
         all_texts = list(getattr(self, 'subtitles', [])) + list(getattr(self, 'timeline_texts', []))
         active_subs = [s for s in all_texts if s.is_visible_at(current_sec)]
         if active_subs:
-            pil_img = Image.fromarray(frame_rgb)
+            pil_img = Image.fromarray(frame_rgb).convert("RGBA")
             draw = ImageDraw.Draw(pil_img)
 
             for sub in active_subs:
@@ -167,6 +216,17 @@ class MediaConverterWorker(QThread):
 
                 x = int((w - text_w) * cur_x)
                 y = int((h - text_h) * cur_y)
+
+                t_op = PhotoshopFX.compute_opacity_with_fade(
+                    current_sec, sub.start_sec, sub.end_sec,
+                    base_opacity=getattr(sub, 'opacity', 1.0),
+                    fade_in_sec=getattr(sub, 'fade_in_sec', 0.0),
+                    fade_out_sec=getattr(sub, 'fade_out_sec', 0.0)
+                )
+
+                # Soft Drop Shadow
+                if getattr(sub, 'drop_shadow', True) and t_op > 0.05:
+                    draw.text((x + 4, y + 4), sub.text, font=font, fill=(0, 0, 0, int(160 * t_op)))
 
                 ox, oy = max(1, int(scaled_size / 14)), max(1, int(scaled_size / 14))
                 draw.text((x-ox, y), sub.text, font=font, fill=sub.border_color)
