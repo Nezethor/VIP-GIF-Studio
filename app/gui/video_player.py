@@ -238,6 +238,36 @@ class VideoPreviewWidget(QWidget):
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         h, w, ch = frame_rgb.shape
 
+        # Draw active secondary PIP videos onto frame using OpenCV
+        active_videos = [v for v in getattr(self, 'video_clips', []) if v.is_visible_at(self.current_sec)]
+        for v_clip in active_videos:
+            if os.path.exists(v_clip.video_path):
+                try:
+                    if not hasattr(self, '_pip_caps'): self._pip_caps = {}
+                    if v_clip.video_path not in self._pip_caps:
+                        self._pip_caps[v_clip.video_path] = cv2.VideoCapture(v_clip.video_path)
+                    
+                    pip_cap = self._pip_caps[v_clip.video_path]
+                    rel_t = self.current_sec - v_clip.start_sec
+                    fps = pip_cap.get(cv2.CAP_PROP_FPS) or 30.0
+                    pip_cap.set(cv2.CAP_PROP_POS_FRAMES, int(rel_t * fps))
+                    ret, pip_frame = pip_cap.read()
+                    if ret:
+                        pip_rgb = cv2.cvtColor(pip_frame, cv2.COLOR_BGR2RGB)
+                        target_w = max(30, int(w * v_clip.width_ratio))
+                        target_h = max(30, int(h * v_clip.height_ratio))
+                        pip_resized = cv2.resize(pip_rgb, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+
+                        pos_x = int((w - target_w) * v_clip.x_ratio)
+                        pos_y = int((h - target_h) * v_clip.y_ratio)
+
+                        px1, py1 = max(0, pos_x), max(0, pos_y)
+                        px2, py2 = min(w, pos_x + target_w), min(h, pos_y + target_h)
+
+                        frame_rgb[py1:py2, px1:px2] = pip_resized[0:(py2-py1), 0:(px2-px1)]
+                except Exception:
+                    pass
+
         # Draw active image overlays onto frame using PIL
         active_imgs = [img for img in getattr(self, 'image_clips', []) if img.is_visible_at(self.current_sec)]
         if active_imgs:
@@ -256,7 +286,6 @@ class VideoPreviewWidget(QWidget):
                         pil_img.paste(overlay_img, (pos_x, pos_y), overlay_img)
                     except Exception:
                         pass
-            import numpy as np
             frame_rgb = np.array(pil_img.convert("RGB"))
 
         # Draw active subtitles onto frame using PIL
@@ -293,7 +322,6 @@ class VideoPreviewWidget(QWidget):
                 if getattr(self, '_dragged_sub', None) == sub:
                     draw.rectangle([x-4, y-4, x+text_w+4, y+text_h+4], outline="#89B4FA", width=2)
 
-            import numpy as np
             frame_rgb = np.array(pil_img)
 
         q_img = QImage(frame_rgb.data, w, h, ch * w, QImage.Format.Format_RGB888)
@@ -307,22 +335,38 @@ class VideoPreviewWidget(QWidget):
     def mousePressEvent(self, event):
         super().mousePressEvent(event)
         active_subs = [s for s in self.subtitles if s.is_visible_at(self.current_sec)]
-        if not active_subs or not self.video_info:
+        active_imgs = [img for img in getattr(self, 'image_clips', []) if img.is_visible_at(self.current_sec)]
+        active_vids = [v for v in getattr(self, 'video_clips', []) if v.is_visible_at(self.current_sec)]
+
+        if not (active_subs or active_imgs or active_vids) or not self.video_info:
             return
 
         lbl_pos = self.video_label.mapFrom(self, event.position().toPoint())
         lbl_w, lbl_h = self.video_label.width(), self.video_label.height()
 
         if 0 <= lbl_pos.x() <= lbl_w and 0 <= lbl_pos.y() <= lbl_h:
-            # Select active subtitle closest to mouse click
-            self._dragged_sub = active_subs[-1]
-            self._update_sub_position_from_mouse(lbl_pos.x(), lbl_pos.y())
+            if active_imgs:
+                self._dragged_img = active_imgs[-1]
+                self._dragged_sub = None
+                self._dragged_vid = None
+                self._update_element_position(lbl_pos.x(), lbl_pos.y(), self._dragged_img)
+            elif active_vids:
+                self._dragged_vid = active_vids[-1]
+                self._dragged_sub = None
+                self._dragged_img = None
+                self._update_element_position(lbl_pos.x(), lbl_pos.y(), self._dragged_vid)
+            elif active_subs:
+                self._dragged_sub = active_subs[-1]
+                self._dragged_img = None
+                self._dragged_vid = None
+                self._update_element_position(lbl_pos.x(), lbl_pos.y(), self._dragged_sub)
 
     def mouseMoveEvent(self, event):
         super().mouseMoveEvent(event)
-        if getattr(self, '_dragged_sub', None):
+        item = getattr(self, '_dragged_img', None) or getattr(self, '_dragged_vid', None) or getattr(self, '_dragged_sub', None)
+        if item:
             lbl_pos = self.video_label.mapFrom(self, event.position().toPoint())
-            self._update_sub_position_from_mouse(lbl_pos.x(), lbl_pos.y())
+            self._update_element_position(lbl_pos.x(), lbl_pos.y(), item)
 
     def mouseReleaseEvent(self, event):
         super().mouseReleaseEvent(event)

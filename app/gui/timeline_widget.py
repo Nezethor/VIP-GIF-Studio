@@ -531,6 +531,7 @@ class TimelineWidget(QWidget):
             self.lbl_insp_info.setText(f"Intervalo de Velocidad [{interval.start_sec:.2f}s - {interval.end_sec:.2f}s]")
 
     def _on_text_clip_selected(self, t_clip: TimelineTextClip):
+        self.canvas.selected_text_clip = t_clip
         self.spn_block_speed.setVisible(False)
         self.txt_clip_content.setVisible(True)
         self.spn_font_size.setVisible(True)
@@ -622,7 +623,12 @@ class TimelineWidget(QWidget):
         if self.canvas.selected_text_clip:
             self.canvas.selected_text_clip.text = text
             self.canvas.update()
-            self.timeline_updated.emit()
+            if not hasattr(self, '_text_timer'):
+                from PyQt6.QtCore import QTimer
+                self._text_timer = QTimer(self)
+                self._text_timer.setSingleShot(True)
+                self._text_timer.timeout.connect(self.timeline_updated.emit)
+            self._text_timer.start(150)
 
     def _on_font_size_changed(self, size: int):
         if self.canvas.selected_text_clip:
