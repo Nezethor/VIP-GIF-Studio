@@ -4,6 +4,7 @@ from PyQt6.QtGui import QImage, QPixmap
 from PIL import Image, ImageDraw, ImageFont
 import cv2
 import os
+import numpy as np
 
 from app.core.video_info import VideoInfo
 from app.gui.range_slider import DualRangeSlider
