@@ -493,6 +493,8 @@ class MainWindow(QMainWindow):
             subtitles=self.subtitles,
             timeline_intervals=self.timeline.canvas.intervals,
             timeline_texts=self.timeline.canvas.text_clips,
+            image_clips=self.timeline.canvas.image_clips,
+            video_clips=self.timeline.canvas.video_clips,
             gpu_engine=gpu_engine
         )
         self.worker.progress_changed.connect(self._on_progress)

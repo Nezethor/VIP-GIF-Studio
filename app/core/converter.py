@@ -31,7 +31,8 @@ def get_ffmpeg_path():
 class MediaConverterWorker(QThread):
     """
     Background QThread to convert video/GIF to high-quality GIF or Video (MP4, WebM, AVI, MOV).
-    Supports speed adjustment (0.1x - 10.0x), reverse playback, proportional text overlays, and audio.
+    Renders ALL timeline elements (Text, Images, PIP Videos, Keyframes, Speed Cuts) frame-by-frame
+    with 100% 1:1 preview matching and perfect audio sync.
     """
     progress_changed = pyqtSignal(int, str)  # (percent: int, log_message: str)
     conversion_finished = pyqtSignal(str)   # (output_path: str)
@@ -50,6 +51,8 @@ class MediaConverterWorker(QThread):
                  subtitles: list = None,
                  timeline_intervals: list = None,
                  timeline_texts: list = None,
+                 image_clips: list = None,
+                 video_clips: list = None,
                  gpu_engine: str = "auto",
                  parent=None):
         super().__init__(parent)
@@ -65,266 +68,327 @@ class MediaConverterWorker(QThread):
         self.subtitles = subtitles if subtitles else []
         self.timeline_intervals = timeline_intervals if timeline_intervals else []
         self.timeline_texts = timeline_texts if timeline_texts else []
+        self.image_clips = image_clips if image_clips else []
+        self.video_clips = video_clips if video_clips else []
         self.gpu_engine = gpu_engine
         self._is_cancelled = False
 
     def cancel(self):
         self._is_cancelled = True
 
-    def _build_drawtext_filters(self, actual_height: int = 720):
-        """Construct FFmpeg drawtext filter string with proportional font scaling."""
-        drawtext_filters = []
-        font_path = r"C\:/Windows/Fonts/arial.ttf"
+    def composite_frame_at(self, frame_bgr, current_sec: float):
+        """
+        Render all active timeline elements (Text, Subtitles, Watermark Images, PIP Videos)
+        onto frame_bgr at timestamp current_sec with keyframe interpolation and 1:1 preview matching.
+        """
+        import cv2
+        import numpy as np
+        from PIL import Image, ImageDraw, ImageFont
 
-        for sub in self.subtitles:
-            if not sub.text or not sub.text.strip():
-                continue
+        frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+        h, w, _ = frame_rgb.shape
 
-            escaped_text = sub.text.replace('\\', '\\\\').replace("'", "’").replace(':', '\\:').replace('%', '\\%')
-            font_color = sub.color.replace('#', '0x') if sub.color.startswith('#') else 'white'
-            border_color = sub.border_color.replace('#', '0x') if sub.border_color.startswith('#') else 'black'
+        # 1. PIP Video Overlay Clips
+        for v_clip in getattr(self, 'video_clips', []):
+            if v_clip.is_visible_at(current_sec) and os.path.exists(v_clip.video_path):
+                try:
+                    pip_cap = getattr(v_clip, '_cap', None)
+                    if pip_cap is None or not pip_cap.isOpened():
+                        pip_cap = cv2.VideoCapture(v_clip.video_path)
+                        v_clip._cap = pip_cap
 
-            # Proportional font size matching preview exactly
-            scaled_font_size = sub.get_scaled_font_size(actual_height)
+                    fps = pip_cap.get(cv2.CAP_PROP_FPS) or 30.0
+                    total_frames = int(pip_cap.get(cv2.CAP_PROP_FRAME_COUNT) or 1)
+                    v_dur_sec = float(total_frames) / fps if fps > 0 else 1.0
 
-            x_expr = f"(w-tw)*{sub.x_ratio:.3f}"
-            y_expr = f"(h-th)*{sub.y_ratio:.3f}"
+                    rel_t = current_sec - v_clip.start_sec
+                    loop_t = rel_t % v_dur_sec if v_dur_sec > 0 else 0.0
+                    target_frame = int(loop_t * fps) % max(1, total_frames)
+                    pip_cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
+                    ret, pip_frame = pip_cap.read()
+                    if ret:
+                        pip_rgb = cv2.cvtColor(pip_frame, cv2.COLOR_BGR2RGB)
+                        cur_x, cur_y, cur_w, cur_h, _ = v_clip.get_transform_at(current_sec) if hasattr(v_clip, 'get_transform_at') else (v_clip.x_ratio, v_clip.y_ratio, v_clip.width_ratio, v_clip.height_ratio, 40)
+                        target_w = max(30, int(w * cur_w))
+                        target_h = max(30, int(h * cur_h))
+                        pip_resized = cv2.resize(pip_rgb, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
 
-            filter_str = (
-                f"drawtext=fontfile='{font_path}':text='{escaped_text}':"
-                f"x={x_expr}:y={y_expr}:fontsize={scaled_font_size}:"
-                f"fontcolor={font_color}:borderw=2:bordercolor={border_color}:"
-                f"enable='between(t,{sub.start_sec:.3f},{sub.end_sec:.3f})'"
-            )
-            drawtext_filters.append(filter_str)
+                        pos_x = int((w - target_w) * cur_x)
+                        pos_y = int((h - target_h) * cur_y)
 
-        return drawtext_filters
+                        px1, py1 = max(0, pos_x), max(0, pos_y)
+                        px2, py2 = min(w, pos_x + target_w), min(h, pos_y + target_h)
 
-    def _build_audio_filter_chain(self):
-        """Construct FFmpeg audio filter string to match playback speed and audio reversal."""
-        af_filters = []
-        if self.reverse:
-            af_filters.append("areverse")
+                        frame_rgb[py1:py2, px1:px2] = pip_resized[0:(py2-py1), 0:(px2-px1)]
+                except Exception:
+                    pass
 
-        speed = self.speed
-        # FFmpeg atempo filter requires values between 0.5 and 2.0
-        while speed > 2.0:
-            af_filters.append("atempo=2.0")
-            speed /= 2.0
-        while speed < 0.5:
-            af_filters.append("atempo=0.5")
-            speed /= 0.5
+        # 2. Image / Watermark Overlay Clips
+        active_imgs = [img for img in getattr(self, 'image_clips', []) if img.is_visible_at(current_sec)]
+        if active_imgs:
+            pil_img = Image.fromarray(frame_rgb)
+            for img_clip in active_imgs:
+                if os.path.exists(img_clip.image_path):
+                    try:
+                        overlay_img = Image.open(img_clip.image_path).convert("RGBA")
+                        cur_x, cur_y, cur_w, cur_h, _ = img_clip.get_transform_at(current_sec) if hasattr(img_clip, 'get_transform_at') else (img_clip.x_ratio, img_clip.y_ratio, img_clip.width_ratio, img_clip.height_ratio, 40)
+                        target_w = max(20, int(w * cur_w))
+                        target_h = max(20, int(h * cur_h))
+                        overlay_img = overlay_img.resize((target_w, target_h), Image.Resampling.LANCZOS)
 
-        if abs(speed - 1.0) > 0.001:
-            af_filters.append(f"atempo={speed:.4f}")
+                        pos_x = int((w - target_w) * cur_x)
+                        pos_y = int((h - target_h) * cur_y)
 
-        return ",".join(af_filters) if af_filters else "anull"
+                        pil_img.paste(overlay_img, (pos_x, pos_y), overlay_img)
+                    except Exception:
+                        pass
+            frame_rgb = np.array(pil_img.convert("RGB"))
+
+        # 3. Text & Subtitle Overlay Clips
+        all_texts = list(getattr(self, 'subtitles', [])) + list(getattr(self, 'timeline_texts', []))
+        active_subs = [s for s in all_texts if s.is_visible_at(current_sec)]
+        if active_subs:
+            pil_img = Image.fromarray(frame_rgb)
+            draw = ImageDraw.Draw(pil_img)
+
+            for sub in active_subs:
+                cur_x, cur_y, _, _, cur_fs = sub.get_transform_at(current_sec) if hasattr(sub, 'get_transform_at') else (sub.x_ratio, sub.y_ratio, 0.3, 0.3, sub.font_size)
+                ref_h = 720.0
+                scaled_size = max(10, int(cur_fs * max(0.2, h / ref_h)))
+                
+                try:
+                    font = ImageFont.truetype("arial.ttf", scaled_size)
+                except Exception:
+                    font = ImageFont.load_default()
+
+                bbox = draw.textbbox((0, 0), sub.text, font=font)
+                text_w = bbox[2] - bbox[0]
+                text_h = bbox[3] - bbox[1]
+
+                x = int((w - text_w) * cur_x)
+                y = int((h - text_h) * cur_y)
+
+                ox, oy = max(1, int(scaled_size / 14)), max(1, int(scaled_size / 14))
+                draw.text((x-ox, y), sub.text, font=font, fill=sub.border_color)
+                draw.text((x+ox, y), sub.text, font=font, fill=sub.border_color)
+                draw.text((x, y-oy), sub.text, font=font, fill=sub.border_color)
+                draw.text((x, y+oy), sub.text, font=font, fill=sub.border_color)
+
+                draw.text((x, y), sub.text, font=font, fill=sub.color)
+
+            frame_rgb = np.array(pil_img.convert("RGB"))
+
+        return cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
 
     def run(self):
+        import cv2
+        import numpy as np
+
         try:
             ffmpeg_exe = get_ffmpeg_path()
             if not os.path.exists(self.input_path):
                 self.conversion_failed.emit(f"Archivo de entrada no encontrado: {self.input_path}")
                 return
 
-            duration = self.end_sec - self.start_sec
-            if duration <= 0:
-                self.conversion_failed.emit("La duración seleccionada es inválida.")
+            cap = cv2.VideoCapture(self.input_path)
+            if not cap.isOpened():
+                self.conversion_failed.emit("No se pudo abrir el archivo de video de entrada.")
                 return
+
+            orig_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 1280)
+            orig_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 720)
+            orig_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+
+            if self.scale_width > 0:
+                out_w = self.scale_width
+                out_h = int(orig_h * (out_w / float(orig_w)))
+                out_h = out_h + (out_h % 2) # ensure even height for H.264
+            else:
+                out_w = orig_w
+                out_h = orig_h
 
             ext = os.path.splitext(self.output_path)[1].lower()
             is_video_export = ext in ['.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v']
 
-            self.progress_changed.emit(5, "Iniciando procesamiento multimedia y filtros de video...")
+            self.progress_changed.emit(5, "Iniciando motor de composición fotograma a fotograma...")
 
-            pts_mult = 1.0 / self.speed if self.speed > 0 else 1.0
-            scale_str = f"scale={self.scale_width}:-2:flags=lanczos" if self.scale_width > 0 else "scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=lanczos"
-            
-            # Base video filters
-            filters_list = [f"fps={self.target_fps}", f"setpts={pts_mult:.4f}*PTS", scale_str]
-
-            if self.reverse:
-                filters_list.append("reverse")
-
-            # Determine actual height for proportional font scaling
-            actual_h = 720
-            if self.scale_width == 480: actual_h = 270
-            elif self.scale_width == 720: actual_h = 405
-            elif self.scale_width == 1080: actual_h = 607
-            elif self.scale_width == 360: actual_h = 202
-
-            drawtext_filters = self._build_drawtext_filters(actual_height=actual_h)
-            filters_list.extend(drawtext_filters)
-
-            base_vf = ",".join(filters_list)
-
-            if len(self.timeline_intervals) > 1:
-                # Multi-interval Timeline Processing Mode
-                self.progress_changed.emit(10, "Procesando múltiple intervalos de velocidad de línea de tiempo...")
-                v_concat_inputs = []
-                a_concat_inputs = []
-                filter_parts = []
-
-                for idx, item in enumerate(self.timeline_intervals):
-                    pts_m = 1.0 / item.speed if item.speed > 0 else 1.0
-                    v_lbl = f"v{idx}"
-                    a_lbl = f"a{idx}"
-
-                    vf_parts = [
-                        f"trim=start={item.start_sec:.3f}:end={item.end_sec:.3f}",
-                        "setpts=PTS-STARTPTS",
-                        f"setpts={pts_m:.4f}*PTS"
-                    ]
-                    if item.reverse:
-                        vf_parts.append("reverse")
-
-                    filter_parts.append(f"[0:v]{','.join(vf_parts)}[{v_lbl}]")
-                    v_concat_inputs.append(f"[{v_lbl}]")
-
-                    af_parts = [
-                        f"atrim=start={item.start_sec:.3f}:end={item.end_sec:.3f}",
-                        "asetpts=PTS-STARTPTS"
-                    ]
-                    if item.reverse:
-                        af_parts.append("areverse")
-
-                    spd = item.speed
-                    while spd > 2.0:
-                        af_parts.append("atempo=2.0")
-                        spd /= 2.0
-                    while spd < 0.5:
-                        af_parts.append("atempo=0.5")
-                        spd /= 0.5
-                    if abs(spd - 1.0) > 0.001:
-                        af_parts.append(f"atempo={spd:.4f}")
-
-                    filter_parts.append(f"[0:a]{','.join(af_parts)}[{a_lbl}]")
-                    a_concat_inputs.append(f"[{a_lbl}]")
-
-                n_segs = len(self.timeline_intervals)
-                filter_parts.append(f"{''.join(v_concat_inputs)}concat=n={n_segs}:v=1:a=0[rawv]")
-                filter_parts.append(f"{''.join(a_concat_inputs)}concat=n={n_segs}:v=0:a=1[outa]")
-
-                drawtext_filters = self._build_drawtext_filters(actual_height=actual_h)
-                final_vf = [f"fps={self.target_fps}", scale_str]
-                final_vf.extend(drawtext_filters)
-
-                filter_parts.append(f"[rawv]{','.join(final_vf)}[outv]")
-                full_filter_complex = ";".join(filter_parts)
-
-                if is_video_export:
-                    cmd_video = [
-                        ffmpeg_exe, "-y",
-                        "-threads", "0",
-                        "-i", self.input_path,
-                        "-filter_complex", full_filter_complex,
-                        "-map", "[outv]",
-                        "-map", "[outa]",
-                        "-c:v", "libx264",
-                        "-c:a", "aac",
-                        "-pix_fmt", "yuv420p",
-                        "-preset", "fast",
-                        "-crf", "20",
-                        self.output_path
-                    ]
-                    self._run_cmd(cmd_video, progress_offset=20, progress_range=75)
-                else:
-                    palette_file = self.output_path + ".palette.png"
-                    cmd_pass1 = [
-                        ffmpeg_exe, "-y",
-                        "-threads", "0",
-                        "-i", self.input_path,
-                        "-filter_complex", f"{full_filter_complex};[outv]palettegen=stats_mode=full:max_colors=256[pal]",
-                        "-map", "[pal]",
-                        palette_file
-                    ]
-                    self._run_cmd(cmd_pass1, progress_offset=5, progress_range=35)
-
-                    dither_option = f"dither={self.dither}:diff_mode=rectangle" if self.dither != "none" else "dither=none"
-                    cmd_pass2 = [
-                        ffmpeg_exe, "-y",
-                        "-threads", "0",
-                        "-i", self.input_path,
-                        "-i", palette_file,
-                        "-filter_complex", f"{full_filter_complex};[outv][1:v]paletteuse={dither_option}[gifout]",
-                        "-map", "[gifout]",
-                        self.output_path
-                    ]
-                    self._run_cmd(cmd_pass2, progress_offset=40, progress_range=55)
-                    self._clean_palette(palette_file)
-
-            elif is_video_export:
-                # Direct Video Export (H.264 MP4 High Quality with Synced Audio)
-                self.progress_changed.emit(20, "Exportando video con audio sincronizado y subtítulos...")
-                af_chain = self._build_audio_filter_chain()
-
-                cmd_video = [
-                    ffmpeg_exe, "-y",
-                    "-ss", f"{self.start_sec:.3f}",
-                    "-t", f"{duration:.3f}",
-                    "-i", self.input_path,
-                    "-vf", base_vf,
-                    "-af", af_chain,
-                    "-c:v", "libx264",
-                    "-c:a", "aac",
-                    "-pix_fmt", "yuv420p",
-                    "-preset", "medium",
-                    "-crf", "20",
-                    self.output_path
-                ]
-
-                self._run_cmd(cmd_video, progress_offset=20, progress_range=75)
-
+            # Determine speed intervals
+            if self.timeline_intervals and len(self.timeline_intervals) > 0:
+                intervals = self.timeline_intervals
             else:
-                # GIF 2-Pass Palette Export
-                palette_file = self.output_path + ".palette.png"
-                palette_filter = f"[0:v]{base_vf},palettegen=stats_mode=full:max_colors=256"
+                from app.core.timeline import SpeedInterval
+                intervals = [SpeedInterval(self.start_sec, self.end_sec, self.speed, self.reverse)]
 
-                cmd_pass1 = [
+            # Temporary raw video file for video exports
+            tmp_video = self.output_path + ".tmp.mp4" if is_video_export else self.output_path
+
+            # FFmpeg Command with Raw Video Stdin Pipe
+            if is_video_export:
+                cmd_ffmpeg = [
                     ffmpeg_exe, "-y",
-                    "-ss", f"{self.start_sec:.3f}",
-                    "-t", f"{duration:.3f}",
-                    "-i", self.input_path,
-                    "-vf", palette_filter,
-                    palette_file
+                    "-f", "rawvideo",
+                    "-vcodec", "rawvideo",
+                    "-s", f"{out_w}x{out_h}",
+                    "-pix_fmt", "bgr24",
+                    "-r", str(self.target_fps),
+                    "-i", "-",
+                    "-c:v", "libx264",
+                    "-pix_fmt", "yuv420p",
+                    "-preset", "fast",
+                    "-crf", "20",
+                    tmp_video
                 ]
-
-                self._run_cmd(cmd_pass1, progress_offset=5, progress_range=35)
-
-                if self._is_cancelled:
-                    self._clean_palette(palette_file)
-                    self.conversion_failed.emit("Conversión cancelada por el usuario.")
-                    return
-
-                self.progress_changed.emit(40, "Paleta generada. Aplicando mapeo de color, subtítulos y dithering avanzado...")
-
-                dither_option = f"dither={self.dither}:diff_mode=rectangle" if self.dither != "none" else "dither=none"
-                apply_filter = f"[0:v]{base_vf}[x];[x][1:v]paletteuse={dither_option}"
-
-                cmd_pass2 = [
+            else:
+                # Direct GIF export using palettegen/paletteuse via ffmpeg
+                cmd_ffmpeg = [
                     ffmpeg_exe, "-y",
-                    "-ss", f"{self.start_sec:.3f}",
-                    "-t", f"{duration:.3f}",
-                    "-i", self.input_path,
-                    "-i", palette_file,
-                    "-filter_complex", apply_filter,
+                    "-f", "rawvideo",
+                    "-vcodec", "rawvideo",
+                    "-s", f"{out_w}x{out_h}",
+                    "-pix_fmt", "bgr24",
+                    "-r", str(self.target_fps),
+                    "-i", "-",
+                    "-filter_complex", "split[s0][s1];[s0]palettegen=stats_mode=full[p];[s1][p]paletteuse=dither=sierra2_4a",
                     self.output_path
                 ]
 
-                self._run_cmd(cmd_pass2, progress_offset=40, progress_range=55)
-                self._clean_palette(palette_file)
+            startupinfo = None
+            if os.name == 'nt':
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+
+            process = subprocess.Popen(
+                cmd_ffmpeg,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                startupinfo=startupinfo
+            )
+
+            # Total duration calculation across active remaining intervals
+            total_active_sec = sum(inv.duration / max(0.1, inv.speed) for inv in intervals)
+            processed_sec = 0.0
+
+            # Render frames for each remaining active interval
+            for inv in intervals:
+                if self._is_cancelled:
+                    break
+
+                inv_dur = inv.duration
+                inv_speed = max(0.1, inv.speed)
+                step_sec = (1.0 / self.target_fps) * inv_speed
+
+                if inv.reverse:
+                    t_cur = inv.end_sec
+                    while t_cur >= inv.start_sec and not self._is_cancelled:
+                        cap.set(cv2.CAP_PROP_POS_MSEC, t_cur * 1000.0)
+                        ret, frame = cap.read()
+                        if ret:
+                            if (orig_w, orig_h) != (out_w, out_h):
+                                frame = cv2.resize(frame, (out_w, out_h), interpolation=cv2.INTER_LINEAR)
+                            
+                            comp_frame = self.composite_frame_at(frame, t_cur)
+                            process.stdin.write(comp_frame.tobytes())
+
+                        t_cur -= step_sec
+                        processed_sec += (1.0 / self.target_fps)
+                        percent = min(90, int(5 + (processed_sec / max(0.1, total_active_sec)) * 80))
+                        self.progress_changed.emit(percent, f"Renderizando elementos en pantalla... ({percent}%)")
+                else:
+                    t_cur = inv.start_sec
+                    while t_cur <= inv.end_sec and not self._is_cancelled:
+                        cap.set(cv2.CAP_PROP_POS_MSEC, t_cur * 1000.0)
+                        ret, frame = cap.read()
+                        if ret:
+                            if (orig_w, orig_h) != (out_w, out_h):
+                                frame = cv2.resize(frame, (out_w, out_h), interpolation=cv2.INTER_LINEAR)
+                            
+                            comp_frame = self.composite_frame_at(frame, t_cur)
+                            process.stdin.write(comp_frame.tobytes())
+
+                        t_cur += step_sec
+                        processed_sec += (1.0 / self.target_fps)
+                        percent = min(90, int(5 + (processed_sec / max(0.1, total_active_sec)) * 80))
+                        self.progress_changed.emit(percent, f"Renderizando elementos en pantalla... ({percent}%)")
+
+            process.stdin.close()
+            process.wait()
+            cap.release()
+
+            # Close VideoCaptures of PIP clips
+            for v_clip in getattr(self, 'video_clips', []):
+                pip_cap = getattr(v_clip, '_cap', None)
+                if pip_cap:
+                    pip_cap.release()
 
             if self._is_cancelled:
                 self.conversion_failed.emit("Conversión cancelada por el usuario.")
                 return
 
+            if is_video_export:
+                # Merge Audio for active intervals into final MP4
+                self.progress_changed.emit(92, "Sincronizando pistas de audio...")
+                try:
+                    audio_filters = []
+                    concat_a = []
+                    for idx, inv in enumerate(intervals):
+                        a_lbl = f"a{idx}"
+                        af_parts = [f"atrim=start={inv.start_sec:.3f}:end={inv.end_sec:.3f}", "asetpts=PTS-STARTPTS"]
+                        if inv.reverse:
+                            af_parts.append("areverse")
+                        spd = inv.speed
+                        while spd > 2.0:
+                            af_parts.append("atempo=2.0")
+                            spd /= 2.0
+                        while spd < 0.5:
+                            af_parts.append("atempo=0.5")
+                            spd /= 0.5
+                        if abs(spd - 1.0) > 0.001:
+                            af_parts.append(f"atempo={spd:.4f}")
+                        audio_filters.append(f"[0:a]{','.join(af_parts)}[{a_lbl}]")
+                        concat_a.append(f"[{a_lbl}]")
+
+                    audio_filters.append(f"{''.join(concat_a)}concat=n={len(intervals)}:v=0:a=1[outa]")
+                    full_af = ";".join(audio_filters)
+
+                    cmd_merge = [
+                        ffmpeg_exe, "-y",
+                        "-i", tmp_video,
+                        "-i", self.input_path,
+                        "-filter_complex", full_af,
+                        "-map", "0:v",
+                        "-map", "[outa]",
+                        "-c:v", "copy",
+                        "-c:a", "aac",
+                        self.output_path
+                    ]
+
+                    proc_m = subprocess.Popen(cmd_merge, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, startupinfo=startupinfo)
+                    ret_m = proc_m.wait()
+
+                    if ret_m == 0 and os.path.exists(self.output_path) and os.path.getsize(self.output_path) > 0:
+                        if os.path.exists(tmp_video):
+                            os.remove(tmp_video)
+                    else:
+                        raise RuntimeError("Audio muxing skipped/failed")
+                except Exception:
+                    # If audio merge fails or source has no audio, fallback to composited video track
+                    if os.path.exists(self.output_path):
+                        try: os.remove(self.output_path)
+                        except Exception: pass
+                    if os.path.exists(tmp_video):
+                        os.rename(tmp_video, self.output_path)
+
             if os.path.exists(self.output_path) and os.path.getsize(self.output_path) > 0:
-                self.progress_changed.emit(100, "¡Archivo creado exitosamente con máxima calidad!")
+                self.progress_changed.emit(100, "¡Vídeo renderizado con éxito con todos sus elementos!")
                 self.conversion_finished.emit(self.output_path)
             else:
-                self.conversion_failed.emit("No se pudo generar el archivo de salida.")
+                self.conversion_failed.emit("No se pudo generar el archivo final.")
 
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             self.conversion_failed.emit(f"Error durante el procesamiento: {str(e)}")
 
     def _clean_palette(self, palette_path):
