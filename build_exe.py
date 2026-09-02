@@ -21,7 +21,7 @@ def build():
         "--noconsole",
         "--onefile",
         "--icon", icon_param,
-        "--name", "VIP_GIF_Studio_v2.8.0",
+        "--name", "VIP_GIF_Studio_v2.8.1",
         "--add-data", add_data_param,
         "--add-data", add_assets,
         "--hidden-import", "PyQt6",
@@ -37,7 +37,7 @@ def build():
     if res.returncode == 0:
         print("\n==================================================")
         print(" ¡Compilación completada con éxito!")
-        print(" Ejecutable generado en: dist/VIP_GIF_Studio_v1.0.0.exe")
+        print(" Ejecutable generado en: dist/VIP_GIF_Studio_v2.8.1.exe")
         print("==================================================")
     else:
         print("\n❌ Error durante la compilación con PyInstaller.")
