@@ -1,8 +1,8 @@
-; Script Inno Setup 6 para VIP GIF Studio v1.1.1
+; Script Inno Setup 6 para VIP GIF Studio v1.2.0
 #define MyAppName "VIP GIF Studio"
-#define MyAppVersion "1.1.1"
+#define MyAppVersion "1.2.0"
 #define MyAppPublisher "VIP Studios"
-#define MyAppExeName "VIP_GIF_Studio_v1.1.1.exe"
+#define MyAppExeName "VIP_GIF_Studio_v1.2.0.exe"
 
 [Setup]
 AppId={{D37E84B1-2F16-4E92-8941-8C51D2A5734A}
@@ -13,7 +13,7 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 OutputDir=installer_dist
-OutputBaseFilename=VIP_GIF_Studio_Setup_v1.1.1
+OutputBaseFilename=VIP_GIF_Studio_Setup_v1.2.0
 SetupIconFile=assets\icon.ico
 Compression=lzma2/ultra64
 SolidCompression=yes

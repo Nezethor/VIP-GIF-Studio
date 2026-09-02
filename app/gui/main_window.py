@@ -312,14 +312,20 @@ class MainWindow(QMainWindow):
         if not self.current_video_path:
             return
 
-        base_name = os.path.splitext(os.path.basename(self.current_video_path))[0]
-        default_output = os.path.join(os.path.dirname(self.current_video_path), f"{base_name}_clip.gif")
+        base_ext = os.path.splitext(self.current_video_path)[1].lower()
+        if not base_ext or base_ext == '.gif':
+            base_ext = '.gif'
+        else:
+            base_ext = '.mp4'
 
-        output_path, _ = QFileDialog.getSaveFileName(
+        base_name = os.path.splitext(os.path.basename(self.current_video_path))[0]
+        default_output = os.path.join(os.path.dirname(self.current_video_path), f"{base_name}_editado{base_ext}")
+
+        output_path, selected_filter = QFileDialog.getSaveFileName(
             self,
-            "Guardar GIF como...",
+            "Guardar Edición como GIF o Video",
             default_output,
-            "Imagen GIF (*.gif)"
+            "Todos los Formatos (*.gif *.mp4 *.webm *.avi *.mov);;Video MP4 (*.mp4);;Imagen GIF (*.gif);;Video WebM (*.webm);;Video AVI (*.avi);;Video MOV (*.mov)"
         )
 
         if not output_path:
@@ -342,7 +348,12 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(0)
         self.progress_bar.setVisible(True)
         self.btn_open_folder.setVisible(False)
-        self.lbl_status.setText("Generando GIF de alta calidad... Por favor espera.")
+        
+        ext = os.path.splitext(output_path)[1].lower()
+        if ext in ['.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v']:
+            self.lbl_status.setText("Procesando y exportando video con subtítulos...")
+        else:
+            self.lbl_status.setText("Generando GIF de alta calidad... Por favor espera.")
 
         self.worker = GifConverterWorker(
             input_path=self.current_video_path,

@@ -242,8 +242,9 @@ class VideoPreviewWidget(QWidget):
             draw = ImageDraw.Draw(pil_img)
             
             for sub in active_subs:
+                scaled_size = sub.get_scaled_font_size(h)
                 try:
-                    font = ImageFont.truetype(r"C:\Windows\Fonts\arial.ttf", sub.font_size)
+                    font = ImageFont.truetype(r"C:\Windows\Fonts\arial.ttf", scaled_size)
                 except Exception:
                     font = ImageFont.load_default()
 
@@ -255,7 +256,7 @@ class VideoPreviewWidget(QWidget):
                 y = int((h - text_h) * sub.y_ratio)
 
                 # Draw outline
-                ox, oy = 2, 2
+                ox, oy = max(1, int(scaled_size / 14)), max(1, int(scaled_size / 14))
                 draw.text((x-ox, y), sub.text, font=font, fill=sub.border_color)
                 draw.text((x+ox, y), sub.text, font=font, fill=sub.border_color)
                 draw.text((x, y-oy), sub.text, font=font, fill=sub.border_color)
@@ -263,6 +264,10 @@ class VideoPreviewWidget(QWidget):
 
                 # Draw text fill
                 draw.text((x, y), sub.text, font=font, fill=sub.color)
+
+                # Draw subtle box around active dragged subtitle
+                if getattr(self, '_dragged_sub', None) == sub:
+                    draw.rectangle([x-4, y-4, x+text_w+4, y+text_h+4], outline="#89B4FA", width=2)
 
             import numpy as np
             frame_rgb = np.array(pil_img)
@@ -275,6 +280,47 @@ class VideoPreviewWidget(QWidget):
         pixmap = QPixmap.fromImage(q_img)
         scaled_pixmap = pixmap.scaled(lbl_size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
         self.video_label.setPixmap(scaled_pixmap)
+
+    def mousePressEvent(self, event):
+        super().mousePressEvent(event)
+        active_subs = [s for s in self.subtitles if s.is_visible_at(self.current_sec)]
+        if not active_subs or not self.video_info:
+            return
+
+        lbl_pos = self.video_label.mapFrom(self, event.position().toPoint())
+        lbl_w, lbl_h = self.video_label.width(), self.video_label.height()
+
+        if 0 <= lbl_pos.x() <= lbl_w and 0 <= lbl_pos.y() <= lbl_h:
+            # Select active subtitle closest to mouse click
+            self._dragged_sub = active_subs[-1]
+            self._update_sub_position_from_mouse(lbl_pos.x(), lbl_pos.y())
+
+    def mouseMoveEvent(self, event):
+        super().mouseMoveEvent(event)
+        if getattr(self, '_dragged_sub', None):
+            lbl_pos = self.video_label.mapFrom(self, event.position().toPoint())
+            self._update_sub_position_from_mouse(lbl_pos.x(), lbl_pos.y())
+
+    def mouseReleaseEvent(self, event):
+        super().mouseReleaseEvent(event)
+        self._dragged_sub = None
+
+    def _update_sub_position_from_mouse(self, mouse_x: int, mouse_y: int):
+        sub = getattr(self, '_dragged_sub', None)
+        if not sub:
+            return
+
+        lbl_w = max(1, self.video_label.width())
+        lbl_h = max(1, self.video_label.height())
+
+        x_ratio = max(0.0, min(1.0, mouse_x / float(lbl_w)))
+        y_ratio = max(0.0, min(1.0, mouse_y / float(lbl_h)))
+
+        sub.x_ratio = x_ratio
+        sub.y_ratio = y_ratio
+
+        if self.video_info and self.cap:
+            self.seek_to(self.current_sec)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
