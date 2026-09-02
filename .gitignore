@@ -1,0 +1,21 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyInstaller / Build outputs
+build/
+dist/
+installer_dist/
+*.spec
+
+# Temporary test outputs
+*.mp4
+*.gif
+*.palette.png
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+*.tmp
