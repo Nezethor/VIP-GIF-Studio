@@ -362,13 +362,31 @@ class VideoPreviewWidget(QWidget):
         scaled_pixmap = pixmap.scaled(lbl_size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
         self.video_label.setPixmap(scaled_pixmap)
 
+    def _get_rendered_video_rect(self):
+        lbl_w = max(1, self.video_label.width())
+        lbl_h = max(1, self.video_label.height())
+        if not self.video_info or self.video_info.width <= 0 or self.video_info.height <= 0:
+            return 0, 0, lbl_w, lbl_h
+
+        vw, vh = self.video_info.width, self.video_info.height
+        scale = min(lbl_w / float(vw), lbl_h / float(vh))
+        render_w = max(1, int(vw * scale))
+        render_h = max(1, int(vh * scale))
+        offset_x = int((lbl_w - render_w) / 2.0)
+        offset_y = int((lbl_h - render_h) / 2.0)
+        return offset_x, offset_y, render_w, render_h
+
     def mousePressEvent(self, event):
         super().mousePressEvent(event)
         if event.button() != Qt.MouseButton.LeftButton or not self.video_info:
             return
 
         lbl_pos = self.video_label.mapFrom(self, event.position().toPoint())
-        lbl_w, lbl_h = max(1, self.video_label.width()), max(1, self.video_label.height())
+        rx, ry, rw, rh = self._get_rendered_video_rect()
+
+        # Local click coordinates mapped strictly inside rendered video frame
+        local_x = lbl_pos.x() - rx
+        local_y = lbl_pos.y() - ry
 
         # Strict selection priority: ONLY drag/resize currently selected item from timeline
         sel = getattr(self, 'selected_item', None)
@@ -386,71 +404,72 @@ class VideoPreviewWidget(QWidget):
             self._resize_corner = None
 
             if hasattr(sel, 'width_ratio'):
-                bw = max(30, int(lbl_w * sel.width_ratio))
-                bh = max(30, int(lbl_h * sel.height_ratio))
+                bw = max(30, int(rw * sel.width_ratio))
+                bh = max(30, int(rh * sel.height_ratio))
             else:
                 bw, bh = 150, 40
 
-            bx = int((lbl_w - bw) * sel.x_ratio)
-            by = int((lbl_h - bh) * sel.y_ratio)
+            bx = int((rw - bw) * sel.x_ratio)
+            by = int((rh - bh) * sel.y_ratio)
 
-            r = 20
-            if abs(lbl_pos.x() - bx) <= r and abs(lbl_pos.y() - by) <= r:
+            r = 25 # Generous 25px hit target for corner handles
+            if abs(local_x - bx) <= r and abs(local_y - by) <= r:
                 self._resize_corner = "TL"
-            elif abs(lbl_pos.x() - (bx + bw)) <= r and abs(lbl_pos.y() - by) <= r:
+            elif abs(local_x - (bx + bw)) <= r and abs(local_y - by) <= r:
                 self._resize_corner = "TR"
-            elif abs(lbl_pos.x() - bx) <= r and abs(lbl_pos.y() - (by + bh)) <= r:
+            elif abs(local_x - bx) <= r and abs(local_y - (by + bh)) <= r:
                 self._resize_corner = "BL"
-            elif abs(lbl_pos.x() - (bx + bw)) <= r and abs(lbl_pos.y() - (by + bh)) <= r:
+            elif abs(local_x - (bx + bw)) <= r and abs(local_y - (by + bh)) <= r:
                 self._resize_corner = "BR"
             else:
-                self._drag_offset_x = lbl_pos.x() - bx
-                self._drag_offset_y = lbl_pos.y() - by
+                self._drag_offset_x = local_x - bx
+                self._drag_offset_y = local_y - by
 
     def mouseMoveEvent(self, event):
         super().mouseMoveEvent(event)
         item = getattr(self, '_dragged_item', None)
         if item:
             lbl_pos = self.video_label.mapFrom(self, event.position().toPoint())
-            lbl_w = max(1, self.video_label.width())
-            lbl_h = max(1, self.video_label.height())
+            rx, ry, rw, rh = self._get_rendered_video_rect()
+            local_x = lbl_pos.x() - rx
+            local_y = lbl_pos.y() - ry
 
             corner = getattr(self, '_resize_corner', None)
             if corner:
-                bw = max(30, int(lbl_w * getattr(item, 'width_ratio', 0.2)))
-                bh = max(30, int(lbl_h * getattr(item, 'height_ratio', 0.2)))
-                bx = int((lbl_w - bw) * item.x_ratio)
-                by = int((lbl_h - bh) * item.y_ratio)
+                bw = max(30, int(rw * getattr(item, 'width_ratio', 0.2)))
+                bh = max(30, int(rh * getattr(item, 'height_ratio', 0.2)))
+                bx = int((rw - bw) * item.x_ratio)
+                by = int((rh - bh) * item.y_ratio)
 
                 if corner == "BR":
-                    new_w = max(30, lbl_pos.x() - bx)
-                    new_h = max(30, lbl_pos.y() - by)
+                    new_w = max(30, local_x - bx)
+                    new_h = max(30, local_y - by)
                 elif corner == "BL":
-                    new_w = max(30, (bx + bw) - lbl_pos.x())
-                    new_h = max(30, lbl_pos.y() - by)
-                    item.x_ratio = max(0.0, min(1.0, lbl_pos.x() / float(lbl_w)))
+                    new_w = max(30, (bx + bw) - local_x)
+                    new_h = max(30, local_y - by)
+                    item.x_ratio = max(0.0, min(1.0, local_x / float(rw)))
                 elif corner == "TR":
-                    new_w = max(30, lbl_pos.x() - bx)
-                    new_h = max(30, (by + bh) - lbl_pos.y())
-                    item.y_ratio = max(0.0, min(1.0, lbl_pos.y() / float(lbl_h)))
+                    new_w = max(30, local_x - bx)
+                    new_h = max(30, (by + bh) - local_y)
+                    item.y_ratio = max(0.0, min(1.0, local_y / float(rh)))
                 elif corner == "TL":
-                    new_w = max(30, (bx + bw) - lbl_pos.x())
-                    new_h = max(30, (by + bh) - lbl_pos.y())
-                    item.x_ratio = max(0.0, min(1.0, lbl_pos.x() / float(lbl_w)))
-                    item.y_ratio = max(0.0, min(1.0, lbl_pos.y() / float(lbl_h)))
+                    new_w = max(30, (bx + bw) - local_x)
+                    new_h = max(30, (by + bh) - local_y)
+                    item.x_ratio = max(0.0, min(1.0, local_x / float(rw)))
+                    item.y_ratio = max(0.0, min(1.0, local_y / float(rh)))
 
                 if hasattr(item, 'width_ratio'):
-                    item.width_ratio = round(max(0.05, min(1.0, new_w / float(lbl_w))), 3)
-                    item.height_ratio = round(max(0.05, min(1.0, new_h / float(lbl_h))), 3)
+                    item.width_ratio = round(max(0.05, min(1.0, new_w / float(rw))), 3)
+                    item.height_ratio = round(max(0.05, min(1.0, new_h / float(rh))), 3)
                 elif hasattr(item, 'font_size'):
                     item.font_size = max(10, min(200, int(new_h * 0.8)))
             else:
                 off_x = getattr(self, '_drag_offset_x', 0)
                 off_y = getattr(self, '_drag_offset_y', 0)
-                new_bx = lbl_pos.x() - off_x
-                new_by = lbl_pos.y() - off_y
-                item.x_ratio = max(0.0, min(1.0, new_bx / float(lbl_w)))
-                item.y_ratio = max(0.0, min(1.0, new_by / float(lbl_h)))
+                new_bx = local_x - off_x
+                new_by = local_y - off_y
+                item.x_ratio = max(0.0, min(1.0, new_bx / float(rw)))
+                item.y_ratio = max(0.0, min(1.0, new_by / float(rh)))
 
             if not getattr(self, '_is_rendering', False):
                 self._is_rendering = True
@@ -462,6 +481,7 @@ class VideoPreviewWidget(QWidget):
     def mouseReleaseEvent(self, event):
         super().mouseReleaseEvent(event)
         self._dragged_item = None
+        self._resize_corner = None
 
     def _update_sub_position_from_mouse(self, mouse_x: int, mouse_y: int):
         pass

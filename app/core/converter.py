@@ -50,6 +50,7 @@ class MediaConverterWorker(QThread):
                  subtitles: list = None,
                  timeline_intervals: list = None,
                  timeline_texts: list = None,
+                 gpu_engine: str = "auto",
                  parent=None):
         super().__init__(parent)
         self.input_path = input_path
@@ -59,12 +60,12 @@ class MediaConverterWorker(QThread):
         self.target_fps = target_fps
         self.scale_width = scale_width
         self.dither = dither
-        self.speed = max(0.1, min(10.0, speed))
+        self.speed = abs(speed) if speed != 0 else 1.0
         self.reverse = reverse
-        self.subtitles = list(subtitles or [])
-        if timeline_texts:
-            self.subtitles.extend(timeline_texts)
-        self.timeline_intervals = timeline_intervals or []
+        self.subtitles = subtitles if subtitles else []
+        self.timeline_intervals = timeline_intervals if timeline_intervals else []
+        self.timeline_texts = timeline_texts if timeline_texts else []
+        self.gpu_engine = gpu_engine
         self._is_cancelled = False
 
     def cancel(self):

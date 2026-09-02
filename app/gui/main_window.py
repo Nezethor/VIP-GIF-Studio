@@ -171,6 +171,19 @@ class MainWindow(QMainWindow):
         settings_layout.addWidget(lbl_fps)
         settings_layout.addWidget(self.combo_fps)
 
+        # Hardware Acceleration GPU/CPU Engine Selector
+        lbl_gpu = QLabel("⚡ Motor de Aceleración por Hardware (GPU/CPU):", settings_group)
+        self.combo_gpu = QComboBox(settings_group)
+        self.combo_gpu.addItems([
+            "🚀 Automático Multi-Hilo Ultrafast (CPU - Máxima Compatibilidad)",
+            "⚡ NVIDIA GPU (h264_nvenc)",
+            "⚡ Intel QuickSync GPU (h264_qsv)",
+            "⚡ AMD Radeon GPU (h264_amf)"
+        ])
+        self.combo_gpu.setToolTip("Multiplica el rendimiento de procesamiento al exportar o renderizar videos pesados.")
+        settings_layout.addWidget(lbl_gpu)
+        settings_layout.addWidget(self.combo_gpu)
+
         # Speed Control (-10.0x to +10.0x with negative reverse speed)
         lbl_speed = QLabel("Velocidad de Reproducción (-10.0x a 10.0x):", settings_group)
         speed_h_layout = QHBoxLayout()
@@ -436,6 +449,12 @@ class MainWindow(QMainWindow):
         else:
             self.lbl_status.setText("Generando GIF de alta calidad... Por favor espera.")
 
+        gpu_idx = self.combo_gpu.currentIndex()
+        gpu_engine = "auto"
+        if gpu_idx == 1: gpu_engine = "nvenc"
+        elif gpu_idx == 2: gpu_engine = "qsv"
+        elif gpu_idx == 3: gpu_engine = "amf"
+
         self.worker = MediaConverterWorker(
             input_path=self.current_video_path,
             output_path=output_path,
@@ -448,7 +467,8 @@ class MainWindow(QMainWindow):
             reverse=reverse,
             subtitles=self.subtitles,
             timeline_intervals=self.timeline.canvas.intervals,
-            timeline_texts=self.timeline.canvas.text_clips
+            timeline_texts=self.timeline.canvas.text_clips,
+            gpu_engine=gpu_engine
         )
         self.worker.progress_changed.connect(self._on_progress)
         self.worker.conversion_finished.connect(self._on_finished)
