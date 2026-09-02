@@ -298,7 +298,7 @@ class MainWindow(QMainWindow):
         self.video_player.set_subtitles(combined)
         self.video_player.image_clips = list(self.timeline.canvas.image_clips)
         if self.video_player.cap and not self.video_player.timer.isActive():
-            self.video_player._update_preview()
+            self.video_player.seek_to(self.video_player.current_sec)
 
     def _load_video_file(self, file_path: str):
         if not os.path.exists(file_path):

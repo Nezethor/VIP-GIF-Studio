@@ -210,6 +210,9 @@ class VideoPreviewWidget(QWidget):
         self.current_sec = self.start_sec
         self.range_slider.setCurrentPos(self.current_sec)
 
+    def _update_preview(self):
+        self.seek_to(self.current_sec)
+
     def _next_frame(self):
         if not self.is_playing or not self.video_info or not self.cap:
             return
