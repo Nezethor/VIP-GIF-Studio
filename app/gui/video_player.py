@@ -331,6 +331,17 @@ class VideoPreviewWidget(QWidget):
                                 saturation=getattr(v_clip, 'saturation', 1.0),
                                 blur_radius=getattr(v_clip, 'blur_radius', 0.0)
                             )
+                            # Border & Rounded Corners
+                            if getattr(v_clip, 'border_radius', 0) > 0 or getattr(v_clip, 'border_width', 0) > 0:
+                                pip_fx = PhotoshopFX.apply_border_and_corners(
+                                    pip_fx,
+                                    radius=getattr(v_clip, 'border_radius', 0),
+                                    border_width=getattr(v_clip, 'border_width', 0),
+                                    border_color=getattr(v_clip, 'border_color', '#FFFFFF')
+                                )
+                            if getattr(v_clip, 'rotation', 0.0) != 0.0:
+                                pip_fx = PhotoshopFX.apply_rotation(pip_fx, getattr(v_clip, 'rotation', 0.0))
+
                             v_op = PhotoshopFX.compute_opacity_with_fade(
                                 self.current_sec, v_clip.start_sec, v_clip.end_sec,
                                 base_opacity=getattr(v_clip, 'opacity', 1.0),
@@ -385,6 +396,18 @@ class VideoPreviewWidget(QWidget):
                         saturation=getattr(img_clip, 'saturation', 1.0),
                         blur_radius=getattr(img_clip, 'blur_radius', 0.0)
                     )
+
+                    # Border & Rounded Corners & Rotation
+                    if getattr(img_clip, 'border_radius', 0) > 0 or getattr(img_clip, 'border_width', 0) > 0:
+                        img_fx = PhotoshopFX.apply_border_and_corners(
+                            img_fx,
+                            radius=getattr(img_clip, 'border_radius', 0),
+                            border_width=getattr(img_clip, 'border_width', 0),
+                            border_color=getattr(img_clip, 'border_color', '#FFFFFF')
+                        )
+                    if getattr(img_clip, 'rotation', 0.0) != 0.0:
+                        img_fx = PhotoshopFX.apply_rotation(img_fx, getattr(img_clip, 'rotation', 0.0))
+
                     img_op = PhotoshopFX.compute_opacity_with_fade(
                         self.current_sec, img_clip.start_sec, img_clip.end_sec,
                         base_opacity=getattr(img_clip, 'opacity', 1.0),

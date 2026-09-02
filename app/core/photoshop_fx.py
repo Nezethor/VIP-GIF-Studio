@@ -196,3 +196,45 @@ class PhotoshopFX:
         # Paste composite onto bg
         bg_pil.paste(blended_rgba, (x1, y1), blended_rgba)
         return bg_pil
+
+    @staticmethod
+    def apply_border_and_corners(img_rgba: Image.Image, radius: int = 0,
+                                 border_width: int = 0, border_color: str = "#FFFFFF") -> Image.Image:
+        """Applies rounded corners and optional stroke border around img_rgba."""
+        if img_rgba is None:
+            return img_rgba
+
+        w, h = img_rgba.size
+        if radius <= 0 and border_width <= 0:
+            return img_rgba
+
+        result = img_rgba.copy()
+
+        # Rounded corners mask
+        if radius > 0:
+            mask = Image.new("L", (w, h), 0)
+            draw_m = ImageDraw.Draw(mask)
+            draw_m.rounded_rectangle((0, 0, w, h), radius=min(radius, min(w, h) // 2), fill=255)
+            cur_alpha = result.split()[3]
+            combined_alpha = ImageChops.multiply(cur_alpha, mask)
+            result.putalpha(combined_alpha)
+
+        # Border Stroke
+        if border_width > 0:
+            draw_b = ImageDraw.Draw(result)
+            half_bw = border_width / 2.0
+            rect_coords = (half_bw, half_bw, w - half_bw, h - half_bw)
+            if radius > 0:
+                draw_b.rounded_rectangle(rect_coords, radius=max(1, radius - int(half_bw)), outline=border_color, width=border_width)
+            else:
+                draw_b.rectangle(rect_coords, outline=border_color, width=border_width)
+
+        return result
+
+    @staticmethod
+    def apply_rotation(img_rgba: Image.Image, angle_deg: float = 0.0) -> Image.Image:
+        """Rotates img_rgba by angle_deg (0-360) preserving alpha transparency."""
+        if img_rgba is None or abs(angle_deg % 360) < 0.1:
+            return img_rgba
+        return img_rgba.rotate(angle_deg, resample=Image.Resampling.BICUBIC, expand=True)
+

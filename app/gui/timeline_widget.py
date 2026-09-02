@@ -143,12 +143,99 @@ class TimelineCanvas(QWidget):
             self.update()
 
     def keyPressEvent(self, event: QKeyEvent):
-        """Delete key (Supr / Backspace) deletes selected clip."""
+        """Delete key (Supr / Backspace) deletes clip, Ctrl+D duplicates clip."""
         if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
             self.delete_selected_item()
             event.accept()
+        elif event.key() == Qt.Key.Key_D and (event.modifiers() & Qt.KeyboardModifier.ControlModifier):
+            self.duplicate_selected_item()
+            event.accept()
         else:
             super().keyPressEvent(event)
+
+    def duplicate_selected_item(self):
+        """Duplicates the currently selected clip or interval (Ctrl+D)."""
+        if self.selected_text_clip:
+            orig = self.selected_text_clip
+            dur = orig.duration
+            new_start = min(self.duration - 0.5, orig.end_sec)
+            new_end = min(self.duration, new_start + dur)
+            clone = TimelineTextClip(
+                text=orig.text + " (Copia)",
+                start_sec=new_start,
+                end_sec=new_end,
+                x_ratio=min(1.0, orig.x_ratio + 0.05),
+                y_ratio=min(1.0, orig.y_ratio + 0.05),
+                font_size=orig.font_size,
+                color=orig.color,
+                border_color=orig.border_color,
+                track_index=getattr(orig, 'track_index', 0),
+                layer_z=getattr(orig, 'layer_z', 10)
+            )
+            for attr in ('opacity', 'fade_in_sec', 'fade_out_sec', 'blend_mode', 'filter_type', 'brightness', 'contrast', 'saturation', 'blur_radius', 'drop_shadow', 'rotation', 'easing_curve'):
+                if hasattr(orig, attr):
+                    setattr(clone, attr, getattr(orig, attr))
+            self.text_clips.append(clone)
+            self.selected_text_clip = clone
+            self.timeline_changed.emit()
+            self.text_clip_selected.emit(clone)
+            self.update()
+            return clone
+
+        elif self.selected_image_clip:
+            orig = self.selected_image_clip
+            dur = orig.duration
+            new_start = min(self.duration - 0.5, orig.end_sec)
+            new_end = min(self.duration, new_start + dur)
+            clone = TimelineImageClip(
+                image_path=orig.image_path,
+                start_sec=new_start,
+                end_sec=new_end,
+                x_ratio=min(1.0, orig.x_ratio + 0.05),
+                y_ratio=min(1.0, orig.y_ratio + 0.05),
+                width_ratio=orig.width_ratio,
+                height_ratio=orig.height_ratio,
+                track_index=getattr(orig, 'track_index', 0),
+                layer_z=getattr(orig, 'layer_z', 5)
+            )
+            for attr in ('opacity', 'fade_in_sec', 'fade_out_sec', 'blend_mode', 'filter_type', 'brightness', 'contrast', 'saturation', 'blur_radius', 'drop_shadow', 'rotation', 'border_radius', 'border_width', 'border_color', 'easing_curve'):
+                if hasattr(orig, attr):
+                    setattr(clone, attr, getattr(orig, attr))
+            self.image_clips.append(clone)
+            self.selected_image_clip = clone
+            self.timeline_changed.emit()
+            self.image_clip_selected.emit(clone)
+            self.update()
+            return clone
+
+        elif self.selected_video_clip:
+            orig = self.selected_video_clip
+            dur = orig.duration
+            new_start = min(self.duration - 0.5, orig.end_sec)
+            new_end = min(self.duration, new_start + dur)
+            clone = TimelineVideoClip(
+                video_path=orig.video_path,
+                start_sec=new_start,
+                end_sec=new_end,
+                x_ratio=min(1.0, orig.x_ratio + 0.05),
+                y_ratio=min(1.0, orig.y_ratio + 0.05),
+                width_ratio=orig.width_ratio,
+                height_ratio=orig.height_ratio,
+                speed=orig.speed,
+                reverse=orig.reverse,
+                track_index=getattr(orig, 'track_index', 0),
+                layer_z=getattr(orig, 'layer_z', 2)
+            )
+            for attr in ('opacity', 'fade_in_sec', 'fade_out_sec', 'blend_mode', 'filter_type', 'brightness', 'contrast', 'saturation', 'blur_radius', 'drop_shadow', 'rotation', 'border_radius', 'border_width', 'border_color', 'easing_curve'):
+                if hasattr(orig, attr):
+                    setattr(clone, attr, getattr(orig, attr))
+            self.video_clips.append(clone)
+            self.selected_video_clip = clone
+            self.timeline_changed.emit()
+            self.video_clip_selected.emit(clone)
+            self.update()
+            return clone
+
 
     def split_interval_at_current_sec(self):
         """Splits the speed interval or secondary video clip at current_sec."""
@@ -557,6 +644,11 @@ class TimelineWidget(QWidget):
         self.btn_add_track.clicked.connect(self._on_add_track_menu)
         toolbar.addWidget(self.btn_add_track)
 
+        self.btn_duplicate = QPushButton("📄 Duplicar (Ctrl+D)", self)
+        self.btn_duplicate.setStyleSheet("background-color: #89DCEB; color: #11111B; font-weight: bold;")
+        self.btn_duplicate.clicked.connect(self._on_duplicate_clicked)
+        toolbar.addWidget(self.btn_duplicate)
+
         self.btn_delete = QPushButton("🗑 Eliminar Seleccionado (Supr)", self)
         self.btn_delete.setStyleSheet("background-color: #45475A; color: #F38BA8; font-weight: bold;")
         self.btn_delete.clicked.connect(self._on_delete_clicked)
@@ -805,6 +897,9 @@ class TimelineWidget(QWidget):
             self.spn_block_speed.blockSignals(False)
             self.lbl_insp_info.setText(f"Intervalo de Velocidad [{interval.start_sec:.2f}s - {interval.end_sec:.2f}s]")
 
+    def _on_duplicate_clicked(self):
+        self.canvas.duplicate_selected_item()
+
     def _on_set_kf_start(self):
         sel = self.canvas.selected_text_clip or self.canvas.selected_image_clip or self.canvas.selected_video_clip
         if sel:
@@ -818,8 +913,16 @@ class TimelineWidget(QWidget):
             if not hasattr(sel, 'keyframe_nodes') or sel.keyframe_nodes is None:
                 sel.keyframe_nodes = []
             
+            node_start = {
+                'sec': sel.start_sec,
+                'x_ratio': sel.start_x_ratio,
+                'y_ratio': sel.start_y_ratio,
+                'width_ratio': sel.start_width_ratio,
+                'height_ratio': sel.start_height_ratio,
+                'font_size': sel.start_font_size
+            }
             sel.keyframe_nodes = [n for n in sel.keyframe_nodes if abs(n.get('sec', -1) - sel.start_sec) > 0.05]
-            sel.keyframe_nodes.append({'sec': sel.start_sec, 'x': sel.start_x_ratio, 'y': sel.start_y_ratio})
+            sel.keyframe_nodes.append(node_start)
             sel.keyframe_nodes.sort(key=lambda n: n.get('sec', 0.0))
 
             self.lbl_insp_info.setText("📍 Clave de Inicio Guardada (Keyframe Start)")
@@ -839,8 +942,16 @@ class TimelineWidget(QWidget):
             if not hasattr(sel, 'keyframe_nodes') or sel.keyframe_nodes is None:
                 sel.keyframe_nodes = []
 
+            node_end = {
+                'sec': sel.end_sec,
+                'x_ratio': sel.end_x_ratio,
+                'y_ratio': sel.end_y_ratio,
+                'width_ratio': sel.end_width_ratio,
+                'height_ratio': sel.end_height_ratio,
+                'font_size': sel.end_font_size
+            }
             sel.keyframe_nodes = [n for n in sel.keyframe_nodes if abs(n.get('sec', -1) - sel.end_sec) > 0.05]
-            sel.keyframe_nodes.append({'sec': sel.end_sec, 'x': sel.end_x_ratio, 'y': sel.end_y_ratio})
+            sel.keyframe_nodes.append(node_end)
             sel.keyframe_nodes.sort(key=lambda n: n.get('sec', 0.0))
 
             self.lbl_insp_info.setText("🏁 Clave de Fin Guardada (Keyframe End)")
@@ -1076,6 +1187,20 @@ class ClipInspectorDialog(QDialog):
                 self.spn_speed.setValue(clip.speed)
                 form_trans.addRow("Velocidad de Vídeo:", self.spn_speed)
 
+        self.spn_rotation = QDoubleSpinBox(tab_trans)
+        self.spn_rotation.setRange(-360.0, 360.0)
+        self.spn_rotation.setSingleStep(5.0)
+        self.spn_rotation.setSuffix("°")
+        self.spn_rotation.setValue(getattr(clip, 'rotation', 0.0))
+        form_trans.addRow("Rotación Angular:", self.spn_rotation)
+
+        self.combo_easing = QComboBox(tab_trans)
+        self.combo_easing.addItems(["Linear", "Suave Entrada (Ease In)", "Suave Salida (Ease Out)", "Suave Ambos (Ease In-Out)", "Rebote (Bounce)"])
+        cur_easing = getattr(clip, 'easing_curve', 'Linear')
+        e_idx = self.combo_easing.findText(cur_easing, Qt.MatchFlag.MatchContains)
+        if e_idx >= 0: self.combo_easing.setCurrentIndex(e_idx)
+        form_trans.addRow("Curva de Animación:", self.combo_easing)
+
         tabs.addTab(tab_trans, "📐 Transformación & Tiempo")
 
         # TAB 2: 🎨 Photoshop FX & Estilos
@@ -1171,6 +1296,30 @@ class ClipInspectorDialog(QDialog):
         sat_hlayout.addWidget(self.spn_blur)
         form_fx.addRow("Color y Enfoque:", sat_hlayout)
 
+        # Rounded Corners & Border for Images and PIP Video
+        if isinstance(clip, (TimelineImageClip, TimelineVideoClip)):
+            self.spn_radius = QSpinBox(tab_fx)
+            self.spn_radius.setRange(0, 80)
+            self.spn_radius.setValue(getattr(clip, 'border_radius', 0))
+            self.spn_radius.setSuffix(" px")
+
+            self.spn_border_w = QSpinBox(tab_fx)
+            self.spn_border_w.setRange(0, 30)
+            self.spn_border_w.setValue(getattr(clip, 'border_width', 0))
+            self.spn_border_w.setSuffix(" px")
+
+            self.frame_border_col = getattr(clip, 'border_color', '#FFFFFF')
+            self.btn_frame_border = QPushButton(f"Color: {self.frame_border_col}", tab_fx)
+            self.btn_frame_border.clicked.connect(self._pick_frame_border_color)
+
+            corner_hlayout = QHBoxLayout()
+            corner_hlayout.addWidget(QLabel("Radio:", tab_fx))
+            corner_hlayout.addWidget(self.spn_radius)
+            corner_hlayout.addWidget(QLabel("Borde:", tab_fx))
+            corner_hlayout.addWidget(self.spn_border_w)
+            corner_hlayout.addWidget(self.btn_frame_border)
+            form_fx.addRow("Marco y Esquinas:", corner_hlayout)
+
         # Drop Shadow
         self.chk_shadow = QCheckBox("Activar Sombra Paralela (Drop Shadow)", tab_fx)
         self.chk_shadow.setChecked(getattr(clip, 'drop_shadow', isinstance(clip, TimelineTextClip)))
@@ -1203,9 +1352,17 @@ class ClipInspectorDialog(QDialog):
             self.color_border = col.name()
             self.btn_border.setText(f"Borde: {self.color_border}")
 
+    def _pick_frame_border_color(self):
+        col = QColorDialog.getColor(QColor(getattr(self, 'frame_border_col', '#FFFFFF')), self, "Seleccionar Color de Marco")
+        if col.isValid():
+            self.frame_border_col = col.name()
+            self.btn_frame_border.setText(f"Color: {self.frame_border_col}")
+
     def _save(self):
         self.clip.start_sec = self.spn_start.value()
         self.clip.end_sec = max(self.clip.start_sec + 0.1, self.spn_end.value())
+        self.clip.rotation = self.spn_rotation.value()
+        self.clip.easing_curve = self.combo_easing.currentText()
 
         # Save Tab 1 (Transformation)
         if isinstance(self.clip, TimelineTextClip):
@@ -1218,6 +1375,10 @@ class ClipInspectorDialog(QDialog):
             self.clip.height_ratio = self.spn_height_pct.value() / 100.0
             if isinstance(self.clip, TimelineVideoClip):
                 self.clip.speed = self.spn_speed.value()
+            if hasattr(self, 'spn_radius'):
+                self.clip.border_radius = self.spn_radius.value()
+                self.clip.border_width = self.spn_border_w.value()
+                self.clip.border_color = getattr(self, 'frame_border_col', '#FFFFFF')
 
         # Save Tab 2 (Photoshop FX)
         self.clip.blend_mode = self.combo_blend.currentText()
