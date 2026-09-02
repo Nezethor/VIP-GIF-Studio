@@ -268,8 +268,18 @@ class VideoPreviewWidget(QWidget):
                         pip_cap = self._pip_caps[v_clip.video_path]
                         rel_t = self.current_sec - v_clip.start_sec
                         fps = pip_cap.get(cv2.CAP_PROP_FPS) or 30.0
-                        pip_cap.set(cv2.CAP_PROP_POS_FRAMES, int(rel_t * fps))
+                        total_frames = int(pip_cap.get(cv2.CAP_PROP_FRAME_COUNT) or 1)
+                        v_dur_sec = float(total_frames) / fps if fps > 0 else 1.0
+
+                        # Infinite loop wrapping when PIP video is stretched
+                        loop_t = rel_t % v_dur_sec if v_dur_sec > 0 else 0.0
+                        target_frame = int(loop_t * fps) % max(1, total_frames)
+                        pip_cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
                         ret, pip_frame = pip_cap.read()
+                        if not ret:
+                            pip_cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                            ret, pip_frame = pip_cap.read()
+
                         if ret:
                             pip_rgb = cv2.cvtColor(pip_frame, cv2.COLOR_BGR2RGB)
                             cur_x, cur_y, cur_w, cur_h, _ = v_clip.get_transform_at(self.current_sec) if hasattr(v_clip, 'get_transform_at') else (v_clip.x_ratio, v_clip.y_ratio, v_clip.width_ratio, v_clip.height_ratio, 40)
@@ -439,13 +449,27 @@ class VideoPreviewWidget(QWidget):
                 bx = int((rw - text_w) * cur_x) - 15
                 by = int((rh - text_h) * cur_y) - 10
 
+            r = 25 # Hit target radius for corner handles
+            is_inside_corner = (abs(local_x - bx) <= r and abs(local_y - by) <= r) or \
+                               (abs(local_x - (bx + bw)) <= r and abs(local_y - by) <= r) or \
+                               (abs(local_x - bx) <= r and abs(local_y - (by + bh)) <= r) or \
+                               (abs(local_x - (bx + bw)) <= r and abs(local_y - (by + bh)) <= r)
+            is_inside_body = (bx <= local_x <= bx + bw) and (by <= local_y <= by + bh)
+
+            if not (is_inside_corner or is_inside_body):
+                self._dragged_item = None
+                self._resize_corner = None
+                return
+
+            self._dragged_item = sel
+            self._resize_corner = None
+
             # Save initial bounding rect coordinates for anchor-based corner resizing
             self._init_bx = bx
             self._init_by = by
             self._init_bw = bw
             self._init_bh = bh
 
-            r = 25 # Generous 25px hit target for corner handles
             if abs(local_x - bx) <= r and abs(local_y - by) <= r:
                 self._resize_corner = "TL"
             elif abs(local_x - (bx + bw)) <= r and abs(local_y - by) <= r:
@@ -457,6 +481,15 @@ class VideoPreviewWidget(QWidget):
             else:
                 self._drag_offset_x = local_x - bx
                 self._drag_offset_y = local_y - by
+
+    def mouseDoubleClickEvent(self, event):
+        super().mouseDoubleClickEvent(event)
+        sel = getattr(self, 'selected_item', None) or getattr(self, '_dragged_item', None)
+        if sel:
+            from app.gui.timeline_widget import ClipInspectorDialog
+            dlg = ClipInspectorDialog(sel, self)
+            if dlg.exec():
+                self.update_needed.emit()
 
     def mouseMoveEvent(self, event):
         super().mouseMoveEvent(event)

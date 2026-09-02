@@ -245,6 +245,14 @@ class TimelineCanvas(QWidget):
             points = [QPoint(int(px) - 5, 0), QPoint(int(px) + 5, 0), QPoint(int(px) + 5, 8), QPoint(int(px), 14), QPoint(int(px) - 5, 8)]
             painter.drawPolygon(points)
 
+    def mouseDoubleClickEvent(self, event: QMouseEvent):
+        super().mouseDoubleClickEvent(event)
+        sel = self.selected_text_clip or self.selected_image_clip or self.selected_video_clip
+        if sel:
+            dlg = ClipInspectorDialog(sel, self)
+            if dlg.exec():
+                self.timeline_changed.emit()
+
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.MouseButton.LeftButton:
             x, y = event.position().x(), event.position().y()
@@ -707,3 +715,121 @@ class TimelineWidget(QWidget):
             self.canvas.selected_video_clip.end_sec = max(self.spn_start_sec.value() + 0.1, self.spn_end_sec.value())
             self.canvas.update()
             self.timeline_updated.emit()
+
+
+from PyQt6.QtWidgets import QDialog, QFormLayout, QDialogButtonBox
+
+class ClipInspectorDialog(QDialog):
+    """Diálogo emergente para editar los atributos de cualquier elemento seleccionado con doble clic (Texto, Imagen, Vídeo PIP)."""
+    def __init__(self, clip, parent=None):
+        super().__init__(parent)
+        self.clip = clip
+        self.setWindowTitle(f"Editar Atributos - {self._get_title()}")
+        self.setFixedWidth(440)
+        self.setStyleSheet("""
+            QDialog { background-color: #1E1E2E; color: #CDD6F4; font-family: 'Segoe UI', sans-serif; }
+            QLabel { color: #BAC2DE; font-size: 13px; font-weight: bold; }
+            QLineEdit, QSpinBox, QDoubleSpinBox { background-color: #313244; color: #CDD6F4; border: 1px solid #45475A; border-radius: 4px; padding: 6px; }
+            QPushButton { background-color: #89B4FA; color: #11111B; font-weight: bold; border-radius: 4px; padding: 8px 14px; }
+            QPushButton:hover { background-color: #B4BEFE; }
+        """)
+
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        form.setSpacing(12)
+
+        # Tiempos de inicio y fin
+        self.spn_start = QDoubleSpinBox(self)
+        self.spn_start.setRange(0.0, 3600.0)
+        self.spn_start.setValue(clip.start_sec)
+        self.spn_start.setSuffix(" s")
+
+        self.spn_end = QDoubleSpinBox(self)
+        self.spn_end.setRange(0.1, 3600.0)
+        self.spn_end.setValue(clip.end_sec)
+        self.spn_end.setSuffix(" s")
+
+        form.addRow("Tiempo Inicio:", self.spn_start)
+        form.addRow("Tiempo Fin:", self.spn_end)
+
+        if isinstance(clip, TimelineTextClip):
+            self.txt_content = QLineEdit(clip.text, self)
+            self.spn_font_size = QSpinBox(self)
+            self.spn_font_size.setRange(10, 250)
+            self.spn_font_size.setValue(clip.font_size)
+
+            self.color_fill = getattr(clip, 'color', '#FFFFFF')
+            self.color_border = getattr(clip, 'border_color', '#000000')
+
+            self.btn_fill = QPushButton(f"Relleno: {self.color_fill}", self)
+            self.btn_fill.clicked.connect(self._pick_fill_color)
+
+            self.btn_border = QPushButton(f"Borde: {self.color_border}", self)
+            self.btn_border.clicked.connect(self._pick_border_color)
+
+            form.addRow("Texto:", self.txt_content)
+            form.addRow("Tamaño Letra (pt):", self.spn_font_size)
+            form.addRow("Color Relleno:", self.btn_fill)
+            form.addRow("Color Borde:", self.btn_border)
+
+        elif isinstance(clip, (TimelineImageClip, TimelineVideoClip)):
+            self.spn_width_pct = QSpinBox(self)
+            self.spn_width_pct.setRange(5, 100)
+            self.spn_width_pct.setValue(int(clip.width_ratio * 100))
+            self.spn_width_pct.setSuffix(" %")
+
+            self.spn_height_pct = QSpinBox(self)
+            self.spn_height_pct.setRange(5, 100)
+            self.spn_height_pct.setValue(int(clip.height_ratio * 100))
+            self.spn_height_pct.setSuffix(" %")
+
+            form.addRow("Ancho (% Pantalla):", self.spn_width_pct)
+            form.addRow("Alto (% Pantalla):", self.spn_height_pct)
+
+            if isinstance(clip, TimelineVideoClip):
+                self.spn_speed = QDoubleSpinBox(self)
+                self.spn_speed.setRange(0.1, 10.0)
+                self.spn_speed.setValue(clip.speed)
+                form.addRow("Velocidad de Vídeo:", self.spn_speed)
+
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel, self)
+        buttons.accepted.connect(self._save)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _get_title(self):
+        if isinstance(self.clip, TimelineTextClip): return "Texto / Subtítulo"
+        elif isinstance(self.clip, TimelineImageClip): return f"Imagen ({os.path.basename(self.clip.image_path)})"
+        elif isinstance(self.clip, TimelineVideoClip): return f"Vídeo PIP ({os.path.basename(self.clip.video_path)})"
+        return "Elemento"
+
+    def _pick_fill_color(self):
+        col = QColorDialog.getColor(QColor(self.color_fill), self, "Seleccionar Color de Relleno")
+        if col.isValid():
+            self.color_fill = col.name()
+            self.btn_fill.setText(f"Relleno: {self.color_fill}")
+
+    def _pick_border_color(self):
+        col = QColorDialog.getColor(QColor(self.color_border), self, "Seleccionar Color de Borde")
+        if col.isValid():
+            self.color_border = col.name()
+            self.btn_border.setText(f"Borde: {self.color_border}")
+
+    def _save(self):
+        self.clip.start_sec = self.spn_start.value()
+        self.clip.end_sec = max(self.clip.start_sec + 0.1, self.spn_end.value())
+
+        if isinstance(self.clip, TimelineTextClip):
+            self.clip.text = self.txt_content.text()
+            self.clip.font_size = self.spn_font_size.value()
+            self.clip.color = self.color_fill
+            self.clip.border_color = self.color_border
+        elif isinstance(self.clip, (TimelineImageClip, TimelineVideoClip)):
+            self.clip.width_ratio = self.spn_width_pct.value() / 100.0
+            self.clip.height_ratio = self.spn_height_pct.value() / 100.0
+            if isinstance(self.clip, TimelineVideoClip):
+                self.clip.speed = self.spn_speed.value()
+
+        self.accept()

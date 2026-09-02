@@ -56,6 +56,11 @@ class MainWindow(QMainWindow):
         header_layout.addWidget(self.lbl_file_path)
         header_layout.addStretch()
 
+        self.btn_toggle_timeline = QPushButton("▼ Ocultar Línea de Tiempo", central_widget)
+        self.btn_toggle_timeline.setStyleSheet("font-weight: bold; background-color: #313244; color: #CDD6F4; margin-right: 6px;")
+        self.btn_toggle_timeline.clicked.connect(self._toggle_timeline)
+        header_layout.addWidget(self.btn_toggle_timeline)
+
         self.btn_toggle_panel = QPushButton("▶ Ocultar Panel Derecho", central_widget)
         self.btn_toggle_panel.setStyleSheet("font-weight: bold; background-color: #313244; color: #CDD6F4;")
         self.btn_toggle_panel.clicked.connect(self._toggle_right_panel)
@@ -307,6 +312,14 @@ class MainWindow(QMainWindow):
             self.btn_toggle_panel.setText("◀ Mostrar Panel Derecho")
         else:
             self.btn_toggle_panel.setText("▶ Ocultar Panel Derecho")
+
+    def _toggle_timeline(self):
+        is_vis = self.timeline.isVisible()
+        self.timeline.setVisible(not is_vis)
+        if is_vis:
+            self.btn_toggle_timeline.setText("▲ Mostrar Línea de Tiempo")
+        else:
+            self.btn_toggle_timeline.setText("▼ Ocultar Línea de Tiempo")
 
     def _open_subtitle_manager(self):
         if not self.video_player.video_info or not self.video_player.video_info.is_valid:
