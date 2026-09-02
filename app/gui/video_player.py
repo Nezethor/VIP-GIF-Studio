@@ -330,10 +330,17 @@ class VideoPreviewWidget(QWidget):
                     except Exception:
                         pass
 
-        # 2. Draw active image overlays onto frame using cached PIL
+        # Check if PIL overlay rendering (images, texts, selected bounding box) is needed
         active_imgs = [img for img in getattr(self, 'image_clips', []) if img.is_visible_at(self.current_sec)]
-        if active_imgs:
+        active_subs = [s for s in self.subtitles if s.is_visible_at(self.current_sec)]
+        sel = getattr(self, 'selected_item', None) or getattr(self, '_dragged_item', None)
+        has_sel = sel and hasattr(sel, 'is_visible_at') and sel.is_visible_at(self.current_sec)
+
+        if active_imgs or active_subs or has_sel:
             pil_img = Image.fromarray(frame_rgb)
+            draw = ImageDraw.Draw(pil_img)
+
+            # 2. Draw active image overlays onto frame
             for img_clip in active_imgs:
                 cur_x, cur_y, cur_w, cur_h, _ = img_clip.get_transform_at(self.current_sec) if hasattr(img_clip, 'get_transform_at') else (img_clip.x_ratio, img_clip.y_ratio, img_clip.width_ratio, img_clip.height_ratio, 40)
                 target_w = max(20, int(w * cur_w))
@@ -345,14 +352,7 @@ class VideoPreviewWidget(QWidget):
                     pos_y = int((h - target_h) * cur_y)
                     pil_img.paste(overlay_img, (pos_x, pos_y), overlay_img)
 
-            frame_rgb = np.array(pil_img.convert("RGB"))
-
-        # 3. Draw active subtitles/texts onto frame using cached fonts
-        active_subs = [s for s in self.subtitles if s.is_visible_at(self.current_sec)]
-        if active_subs:
-            pil_img = Image.fromarray(frame_rgb)
-            draw = ImageDraw.Draw(pil_img)
-
+            # 3. Draw active subtitles/texts onto frame
             for sub in active_subs:
                 cur_x, cur_y, _, _, cur_fs = sub.get_transform_at(self.current_sec) if hasattr(sub, 'get_transform_at') else (sub.x_ratio, sub.y_ratio, 0.3, 0.3, sub.font_size)
                 ref_h = 720.0
@@ -374,43 +374,37 @@ class VideoPreviewWidget(QWidget):
 
                 draw.text((x, y), sub.text, font=font, fill=sub.color)
 
+            # 4. Draw smooth bounding box with corner handles around selected item
+            if has_sel:
+                cur_x, cur_y, cur_w, cur_h, cur_fs = sel.get_transform_at(self.current_sec) if hasattr(sel, 'get_transform_at') else (sel.x_ratio, sel.y_ratio, getattr(sel, 'width_ratio', 0.3), getattr(sel, 'height_ratio', 0.3), getattr(sel, 'font_size', 40))
+
+                if hasattr(sel, 'width_ratio'):
+                    bw = max(30, int(w * cur_w))
+                    bh = max(30, int(h * cur_h))
+                    bx = int((w - bw) * cur_x)
+                    by = int((h - bh) * cur_y)
+                else:
+                    scaled_size = max(10, int(cur_fs * max(0.2, h / 720.0)))
+                    font = self._get_font(scaled_size)
+                    t_box = draw.textbbox((0, 0), sel.text or "Texto", font=font)
+                    text_w = t_box[2] - t_box[0]
+                    text_h = t_box[3] - t_box[1]
+
+                    bw = max(40, text_w + 30)
+                    bh = max(24, text_h + 20)
+                    bx = int((w - text_w) * cur_x) - 15
+                    by = int((h - text_h) * cur_y) - 10
+
+                box_color = "#F5C2E7" if getattr(sel, 'enable_keyframes', False) else "#89B4FA"
+                draw.rectangle([bx, by, bx + bw, by + bh], outline=box_color, width=2)
+
+                r = 6
+                draw.ellipse([bx - r, by - r, bx + r, by + r], fill="#F5E0DC", outline=box_color)
+                draw.ellipse([bx + bw - r, by - r, bx + bw + r, by + r], fill="#F5E0DC", outline=box_color)
+                draw.ellipse([bx - r, by + bh - r, bx + r, by + bh + r], fill="#F5E0DC", outline=box_color)
+                draw.ellipse([bx + bw - r, by + bh - r, bx + bw + r, by + bh + r], fill="#F5E0DC", outline=box_color)
+
             frame_rgb = np.array(pil_img.convert("RGB"))
-
-        # Draw smooth bounding box with corner handles around selected item
-        sel = getattr(self, 'selected_item', None) or getattr(self, '_dragged_item', None)
-        if sel and hasattr(sel, 'is_visible_at') and sel.is_visible_at(self.current_sec):
-            cur_x, cur_y, cur_w, cur_h, cur_fs = sel.get_transform_at(self.current_sec) if hasattr(sel, 'get_transform_at') else (sel.x_ratio, sel.y_ratio, getattr(sel, 'width_ratio', 0.3), getattr(sel, 'height_ratio', 0.3), getattr(sel, 'font_size', 40))
-
-            if hasattr(sel, 'width_ratio'):
-                bw = max(30, int(w * cur_w))
-                bh = max(30, int(h * cur_h))
-                bx = int((w - bw) * cur_x)
-                by = int((h - bh) * cur_y)
-            else:
-                # Text element auto-fitting box using EXACT rendered font size & metrics
-                scaled_size = max(10, int(cur_fs * max(0.2, h / 720.0)))
-                font = self._get_font(scaled_size)
-                t_box = draw.textbbox((0, 0), sel.text or "Texto", font=font)
-                text_w = t_box[2] - t_box[0]
-                text_h = t_box[3] - t_box[1]
-
-                bw = max(40, text_w + 30)
-                bh = max(24, text_h + 20)
-                bx = int((w - text_w) * cur_x) - 15
-                by = int((h - text_h) * cur_y) - 10
-
-            # Smooth cyan rectangle with keyframe indicator glow
-            box_color = "#F5C2E7" if getattr(sel, 'enable_keyframes', False) else "#89B4FA"
-            draw.rectangle([bx, by, bx + bw, by + bh], outline=box_color, width=2)
-
-            # Corner handle dots
-            r = 6
-            draw.ellipse([bx - r, by - r, bx + r, by + r], fill="#F5E0DC", outline=box_color)
-            draw.ellipse([bx + bw - r, by - r, bx + bw + r, by + r], fill="#F5E0DC", outline=box_color)
-            draw.ellipse([bx - r, by + bh - r, bx + r, by + bh + r], fill="#F5E0DC", outline=box_color)
-            draw.ellipse([bx + bw - r, by + bh - r, bx + bw + r, by + bh + r], fill="#F5E0DC", outline=box_color)
-
-        frame_rgb = np.array(pil_img)
 
         q_img = QImage(frame_rgb.data, w, h, ch * w, QImage.Format.Format_RGB888)
 
