@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QMessageBox, QFrame, QSplitter
 )
 from PyQt6.QtCore import Qt, QUrl
-from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QDesktopServices
+from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QDesktopServices, QIcon, QPixmap
 
 from app.gui.styles import DARK_STYLESHEET
 from app.gui.video_player import VideoPreviewWidget
@@ -18,18 +18,23 @@ class MainWindow(QMainWindow):
     """
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("VIP GIF Studio - Convertidor de Video a GIF de Máxima Calidad")
+        self.setWindowTitle("VIP GIF Studio - Convertidor de Video a GIF")
         self.resize(1100, 750)
         self.setMinimumSize(850, 600)
         self.setAcceptDrops(True)
+
+        # Set Window Icon
+        icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "assets", "icon.png")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
 
         self.current_video_path = ""
         self.worker = None
 
         self.setStyleSheet(DARK_STYLESHEET)
-        self._init_ui()
+        self._init_ui(icon_path)
 
-    def _init_ui(self):
+    def _init_ui(self, icon_path=""):
         central_widget = QWidget(self)
         self.setCentralWidget(central_widget)
 
@@ -37,12 +42,20 @@ class MainWindow(QMainWindow):
         main_layout.setContentsMargins(16, 16, 16, 16)
         main_layout.setSpacing(12)
 
-        # Header Title Bar
+        # Header Title Bar with Movie Clapperboard Logo
         header_layout = QHBoxLayout()
-        title_label = QLabel("🎬 VIP GIF Studio", self)
+        header_layout.setSpacing(10)
+
+        if icon_path and os.path.exists(icon_path):
+            logo_label = QLabel(self)
+            pix = QPixmap(icon_path).scaled(36, 36, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            logo_label.setPixmap(pix)
+            header_layout.addWidget(logo_label)
+
+        title_label = QLabel("VIP GIF Studio", self)
         title_label.setStyleSheet("font-size: 22px; font-weight: bold; color: #89B4FA;")
-        subtitle_label = QLabel("Convertidor Profesional de Video a GIF con Paleta HD", self)
-        subtitle_label.setStyleSheet("font-size: 13px; color: #A6ADC8; margin-left: 10px;")
+        subtitle_label = QLabel("Convertidor Profesional de Video a GIF", self)
+        subtitle_label.setStyleSheet("font-size: 13px; color: #A6ADC8; margin-left: 6px;")
 
         header_layout.addWidget(title_label)
         header_layout.addWidget(subtitle_label)
