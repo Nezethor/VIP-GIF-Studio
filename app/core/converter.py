@@ -222,6 +222,9 @@ class MediaConverterWorker(QThread):
             # Temporary raw video file for video exports
             tmp_video = self.output_path + ".tmp.mp4" if is_video_export else self.output_path
 
+            # Helper for GPU/CPU Encoder selection
+            enc_flags = self._get_encoder_flags(ffmpeg_exe, is_video_export)
+
             # FFmpeg Command with Raw Video Stdin Pipe
             if is_video_export:
                 cmd_ffmpeg = [
@@ -231,11 +234,9 @@ class MediaConverterWorker(QThread):
                     "-s", f"{out_w}x{out_h}",
                     "-pix_fmt", "bgr24",
                     "-r", str(self.target_fps),
-                    "-i", "-",
-                    "-c:v", "libx264",
+                    "-i", "-"
+                ] + enc_flags + [
                     "-pix_fmt", "yuv420p",
-                    "-preset", "fast",
-                    "-crf", "20",
                     tmp_video
                 ]
             else:
@@ -297,8 +298,8 @@ class MediaConverterWorker(QThread):
                         self.progress_changed.emit(percent, f"Renderizando elementos en pantalla... ({percent}%)")
                 else:
                     t_cur = inv.start_sec
+                    cap.set(cv2.CAP_PROP_POS_MSEC, inv.start_sec * 1000.0)
                     while t_cur <= inv.end_sec and not self._is_cancelled:
-                        cap.set(cv2.CAP_PROP_POS_MSEC, t_cur * 1000.0)
                         ret, frame = cap.read()
                         if ret:
                             if (orig_w, orig_h) != (out_w, out_h):
@@ -390,6 +391,47 @@ class MediaConverterWorker(QThread):
             import traceback
             traceback.print_exc()
             self.conversion_failed.emit(f"Error durante el procesamiento: {str(e)}")
+
+    def _get_encoder_flags(self, ffmpeg_exe, is_video: bool) -> list:
+        if not is_video:
+            return []
+        
+        selected = getattr(self, 'gpu_engine', 'auto')
+
+        # 1. NVIDIA NVENC
+        if selected in ['nvenc', 'auto']:
+            if self._test_encoder(ffmpeg_exe, 'h264_nvenc'):
+                print("⚡ GPU Hardware Encoder Acoplado: NVIDIA NVENC (h264_nvenc)")
+                return ['-c:v', 'h264_nvenc', '-preset', 'p4', '-rc', 'constqp', '-qp', '20']
+
+        # 2. Intel QuickSync QSV
+        if selected in ['qsv', 'auto']:
+            if self._test_encoder(ffmpeg_exe, 'h264_qsv'):
+                print("⚡ GPU Hardware Encoder Acoplado: Intel QuickSync (h264_qsv)")
+                return ['-c:v', 'h264_qsv', '-preset', 'veryfast', '-global_quality', '20']
+
+        # 3. AMD AMF
+        if selected in ['amf', 'auto']:
+            if self._test_encoder(ffmpeg_exe, 'h264_amf'):
+                print("⚡ GPU Hardware Encoder Acoplado: AMD Radeon AMF (h264_amf)")
+                return ['-c:v', 'h264_amf', '-quality', 'speed', '-qp_p', '20']
+
+        # 4. CPU High-Performance Multi-Core Fallback
+        print("💻 CPU Multi-Threading Acoplado: libx264 Ultrafast (-threads 0)")
+        return ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'fastdecode', '-crf', '20', '-threads', '0']
+
+    def _test_encoder(self, ffmpeg_exe, encoder_name: str) -> bool:
+        try:
+            cmd = [ffmpeg_exe, '-y', '-f', 'lavfi', '-i', 'nullsrc=s=64x64:d=0.1', '-c:v', encoder_name, '-f', 'null', '-']
+            startupinfo = None
+            if os.name == 'nt':
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+            res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, startupinfo=startupinfo, timeout=3)
+            return res.returncode == 0
+        except Exception:
+            return False
 
     def _clean_palette(self, palette_path):
         if os.path.exists(palette_path):

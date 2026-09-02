@@ -232,7 +232,8 @@ class VideoPreviewWidget(QWidget):
                     self.seek_to(first_start)
                     return
 
-        self.current_sec += 0.033
+        frame_dt = 1.0 / max(1.0, self.video_info.fps)
+        self.current_sec += frame_dt
         if self.current_sec >= self.end_sec:
             self.current_sec = self.start_sec
             self.seek_to(self.start_sec)
@@ -249,38 +250,70 @@ class VideoPreviewWidget(QWidget):
             self.seek_to(self.start_sec)
 
     def _get_font(self, size: int):
-        try:
-            return ImageFont.truetype(r"C:\Windows\Fonts\arial.ttf", int(size))
-        except Exception:
-            return ImageFont.load_default()
+        if not hasattr(self, '_font_cache'): self._font_cache = {}
+        if size not in self._font_cache:
+            try:
+                self._font_cache[size] = ImageFont.truetype(r"C:\Windows\Fonts\arial.ttf", int(size))
+            except Exception:
+                self._font_cache[size] = ImageFont.load_default()
+        return self._font_cache[size]
+
+    def _get_cached_image(self, path: str):
+        if not hasattr(self, '_img_cache'): self._img_cache = {}
+        if path not in self._img_cache:
+            if os.path.exists(path):
+                self._img_cache[path] = Image.open(path).convert("RGBA")
+            else:
+                return None
+        return self._img_cache[path]
+
+    def _get_resized_overlay(self, path: str, target_w: int, target_h: int):
+        if not hasattr(self, '_resize_cache'): self._resize_cache = {}
+        key = (path, target_w, target_h)
+        if key not in self._resize_cache:
+            base_img = self._get_cached_image(path)
+            if base_img is None: return None
+            if len(self._resize_cache) > 60: self._resize_cache.clear()
+            self._resize_cache[key] = base_img.resize((target_w, target_h), Image.Resampling.BILINEAR)
+        return self._resize_cache[key]
 
     def _render_frame(self, frame_bgr):
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         h, w, ch = frame_rgb.shape
-        # Draw active Picture-in-Picture (PIP) video overlays onto frame
+
+        # 1. Draw active Picture-in-Picture (PIP) video overlays onto frame
         active_vids = [v for v in getattr(self, 'video_clips', []) if v.is_visible_at(self.current_sec)]
         if active_vids:
+            if not hasattr(self, '_pip_caps'): self._pip_caps = {}
+            if not hasattr(self, '_pip_last_pos'): self._pip_last_pos = {}
+
             for v_clip in active_vids:
-                if not hasattr(self, '_pip_caps'): self._pip_caps = {}
-                if v_clip.video_path not in self._pip_caps: self._pip_caps[v_clip.video_path] = cv2.VideoCapture(v_clip.video_path)
-                if v_clip.video_path in self._pip_caps:
+                if v_clip.video_path not in self._pip_caps:
+                    self._pip_caps[v_clip.video_path] = cv2.VideoCapture(v_clip.video_path)
+                
+                pip_cap = self._pip_caps.get(v_clip.video_path)
+                if pip_cap and pip_cap.isOpened():
                     try:
-                        pip_cap = self._pip_caps[v_clip.video_path]
                         rel_t = self.current_sec - v_clip.start_sec
                         fps = pip_cap.get(cv2.CAP_PROP_FPS) or 30.0
                         total_frames = int(pip_cap.get(cv2.CAP_PROP_FRAME_COUNT) or 1)
                         v_dur_sec = float(total_frames) / fps if fps > 0 else 1.0
 
-                        # Infinite loop wrapping when PIP video is stretched
                         loop_t = rel_t % v_dur_sec if v_dur_sec > 0 else 0.0
                         target_frame = int(loop_t * fps) % max(1, total_frames)
-                        pip_cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
+                        last_pos = self._pip_last_pos.get(v_clip.video_path, -999)
+
+                        # Seek only when needed; otherwise read sequentially for ultra speed
+                        if target_frame != last_pos + 1:
+                            pip_cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
+                        
                         ret, pip_frame = pip_cap.read()
                         if not ret:
                             pip_cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                             ret, pip_frame = pip_cap.read()
 
                         if ret:
+                            self._pip_last_pos[v_clip.video_path] = target_frame
                             pip_rgb = cv2.cvtColor(pip_frame, cv2.COLOR_BGR2RGB)
                             cur_x, cur_y, cur_w, cur_h, _ = v_clip.get_transform_at(self.current_sec) if hasattr(v_clip, 'get_transform_at') else (v_clip.x_ratio, v_clip.y_ratio, v_clip.width_ratio, v_clip.height_ratio, 40)
                             target_w = max(30, int(w * cur_w))
@@ -297,54 +330,51 @@ class VideoPreviewWidget(QWidget):
                     except Exception:
                         pass
 
-        # Draw active image overlays onto frame using PIL
+        # 2. Draw active image overlays onto frame using cached PIL
         active_imgs = [img for img in getattr(self, 'image_clips', []) if img.is_visible_at(self.current_sec)]
         if active_imgs:
             pil_img = Image.fromarray(frame_rgb)
             for img_clip in active_imgs:
-                if os.path.exists(img_clip.image_path):
-                    try:
-                        overlay_img = Image.open(img_clip.image_path).convert("RGBA")
-                        cur_x, cur_y, cur_w, cur_h, _ = img_clip.get_transform_at(self.current_sec) if hasattr(img_clip, 'get_transform_at') else (img_clip.x_ratio, img_clip.y_ratio, img_clip.width_ratio, img_clip.height_ratio, 40)
-                        target_w = max(20, int(w * cur_w))
-                        target_h = max(20, int(h * cur_h))
-                        overlay_img = overlay_img.resize((target_w, target_h), Image.Resampling.LANCZOS)
+                cur_x, cur_y, cur_w, cur_h, _ = img_clip.get_transform_at(self.current_sec) if hasattr(img_clip, 'get_transform_at') else (img_clip.x_ratio, img_clip.y_ratio, img_clip.width_ratio, img_clip.height_ratio, 40)
+                target_w = max(20, int(w * cur_w))
+                target_h = max(20, int(h * cur_h))
+                
+                overlay_img = self._get_resized_overlay(img_clip.image_path, target_w, target_h)
+                if overlay_img is not None:
+                    pos_x = int((w - target_w) * cur_x)
+                    pos_y = int((h - target_h) * cur_y)
+                    pil_img.paste(overlay_img, (pos_x, pos_y), overlay_img)
 
-                        pos_x = int((w - target_w) * cur_x)
-                        pos_y = int((h - target_h) * cur_y)
-
-                        pil_img.paste(overlay_img, (pos_x, pos_y), overlay_img)
-                    except Exception:
-                        pass
             frame_rgb = np.array(pil_img.convert("RGB"))
 
-        # Draw active subtitles onto frame using PIL
+        # 3. Draw active subtitles/texts onto frame using cached fonts
         active_subs = [s for s in self.subtitles if s.is_visible_at(self.current_sec)]
-        pil_img = Image.fromarray(frame_rgb)
-        draw = ImageDraw.Draw(pil_img)
+        if active_subs:
+            pil_img = Image.fromarray(frame_rgb)
+            draw = ImageDraw.Draw(pil_img)
 
-        for sub in active_subs:
-            cur_x, cur_y, _, _, cur_fs = sub.get_transform_at(self.current_sec) if hasattr(sub, 'get_transform_at') else (sub.x_ratio, sub.y_ratio, 0.3, 0.3, sub.font_size)
-            ref_h = 720.0
-            scaled_size = max(10, int(cur_fs * max(0.2, h / ref_h)))
-            font = self._get_font(scaled_size)
+            for sub in active_subs:
+                cur_x, cur_y, _, _, cur_fs = sub.get_transform_at(self.current_sec) if hasattr(sub, 'get_transform_at') else (sub.x_ratio, sub.y_ratio, 0.3, 0.3, sub.font_size)
+                ref_h = 720.0
+                scaled_size = max(10, int(cur_fs * max(0.2, h / ref_h)))
+                font = self._get_font(scaled_size)
 
-            bbox = draw.textbbox((0, 0), sub.text, font=font)
-            text_w = bbox[2] - bbox[0]
-            text_h = bbox[3] - bbox[1]
+                bbox = draw.textbbox((0, 0), sub.text, font=font)
+                text_w = bbox[2] - bbox[0]
+                text_h = bbox[3] - bbox[1]
 
-            x = int((w - text_w) * cur_x)
-            y = int((h - text_h) * cur_y)
+                x = int((w - text_w) * cur_x)
+                y = int((h - text_h) * cur_y)
 
-            # Draw outline
-            ox, oy = max(1, int(scaled_size / 14)), max(1, int(scaled_size / 14))
-            draw.text((x-ox, y), sub.text, font=font, fill=sub.border_color)
-            draw.text((x+ox, y), sub.text, font=font, fill=sub.border_color)
-            draw.text((x, y-oy), sub.text, font=font, fill=sub.border_color)
-            draw.text((x, y+oy), sub.text, font=font, fill=sub.border_color)
+                ox, oy = max(1, int(scaled_size / 14)), max(1, int(scaled_size / 14))
+                draw.text((x-ox, y), sub.text, font=font, fill=sub.border_color)
+                draw.text((x+ox, y), sub.text, font=font, fill=sub.border_color)
+                draw.text((x, y-oy), sub.text, font=font, fill=sub.border_color)
+                draw.text((x, y+oy), sub.text, font=font, fill=sub.border_color)
 
-            # Draw text fill
-            draw.text((x, y), sub.text, font=font, fill=sub.color)
+                draw.text((x, y), sub.text, font=font, fill=sub.color)
+
+            frame_rgb = np.array(pil_img.convert("RGB"))
 
         # Draw smooth bounding box with corner handles around selected item
         sel = getattr(self, 'selected_item', None) or getattr(self, '_dragged_item', None)
