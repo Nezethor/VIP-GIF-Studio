@@ -283,9 +283,10 @@ class MediaConverterWorker(QThread):
                 if inv.reverse:
                     t_cur = inv.end_sec
                     while t_cur >= inv.start_sec and not self._is_cancelled:
-                        cap.set(cv2.CAP_PROP_POS_MSEC, t_cur * 1000.0)
+                        target_frame_idx = max(0, int(t_cur * orig_fps))
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame_idx)
                         ret, frame = cap.read()
-                        if ret:
+                        if ret and frame is not None:
                             if (orig_w, orig_h) != (out_w, out_h):
                                 frame = cv2.resize(frame, (out_w, out_h), interpolation=cv2.INTER_LINEAR)
                             
@@ -298,14 +299,31 @@ class MediaConverterWorker(QThread):
                         self.progress_changed.emit(percent, f"Renderizando elementos en pantalla... ({percent}%)")
                 else:
                     t_cur = inv.start_sec
-                    cap.set(cv2.CAP_PROP_POS_MSEC, inv.start_sec * 1000.0)
+                    start_frame_idx = max(0, int(inv.start_sec * orig_fps))
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame_idx)
+                    current_frame_idx = start_frame_idx
+
+                    last_valid_frame = None
+
                     while t_cur <= inv.end_sec and not self._is_cancelled:
-                        ret, frame = cap.read()
-                        if ret:
+                        target_frame_idx = max(0, int(t_cur * orig_fps))
+                        
+                        # Fast-forward sequential reads until current_frame_idx reaches target_frame_idx
+                        ret = True
+                        while current_frame_idx <= target_frame_idx:
+                            ret, frame = cap.read()
+                            if not ret or frame is None:
+                                break
+                            last_valid_frame = frame
+                            current_frame_idx += 1
+
+                        frame_to_use = last_valid_frame if (last_valid_frame is not None) else frame
+
+                        if frame_to_use is not None:
                             if (orig_w, orig_h) != (out_w, out_h):
-                                frame = cv2.resize(frame, (out_w, out_h), interpolation=cv2.INTER_LINEAR)
+                                frame_to_use = cv2.resize(frame_to_use, (out_w, out_h), interpolation=cv2.INTER_LINEAR)
                             
-                            comp_frame = self.composite_frame_at(frame, t_cur)
+                            comp_frame = self.composite_frame_at(frame_to_use, t_cur)
                             process.stdin.write(comp_frame.tobytes())
 
                         t_cur += step_sec

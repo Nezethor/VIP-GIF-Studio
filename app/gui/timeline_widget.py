@@ -162,8 +162,8 @@ class TimelineCanvas(QWidget):
 
         ruler_h = 28
         track_h = 40
-        track_y = [32, 77, 122, 167, 212]
-        track_names = ["PISTA VELOCIDAD", "PISTA TEXTO 1", "PISTA TEXTO 2", "PISTA IMAGENES", "PISTA VIDEO PIP"]
+        track_y = [32, 77, 122, 167, 212, 257]
+        track_names = ["PISTA RECORTES", "PISTA VELOCIDAD", "PISTA TEXTO 1", "PISTA TEXTO 2", "PISTA IMAGENES", "PISTA VIDEO PIP"]
 
         for idx, ty in enumerate(track_y):
             painter.fillRect(115, ty, w - 120, track_h, QColor("#1E1E2E"))
@@ -232,36 +232,42 @@ class TimelineCanvas(QWidget):
                 painter.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
                 painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, title)
 
-        # 2. SPEED INTERVALS (Track 0)
+        # 2. PISTA RECORTES (Track 0)
+        for idx, item in enumerate(self.intervals):
+            x1 = max(115, self._sec_to_x(item.start_sec))
+            x2 = min(w, self._sec_to_x(item.end_sec))
+            draw_clip_block(x1, x2, track_y[0], QColor("#F38BA8"), item == self.selected_interval, f"✂ Clip {idx+1} [{item.start_sec:.1f}s - {item.end_sec:.1f}s]")
+
+        # 3. SPEED INTERVALS (Track 1)
         for item in self.intervals:
             x1 = max(115, self._sec_to_x(item.start_sec))
             x2 = min(w, self._sec_to_x(item.end_sec))
-            col = QColor("#F38BA8") if item.reverse else (QColor("#FAB387") if item.speed < 0.9 else (QColor("#CBA6F7") if item.speed > 1.1 else QColor("#89B4FA")))
+            col = QColor("#FAB387") if item.speed < 0.9 else (QColor("#CBA6F7") if item.speed > 1.1 else QColor("#89B4FA"))
             rev_tag = " 🔄" if item.reverse else ""
-            draw_clip_block(x1, x2, track_y[0], col, item == self.selected_interval, f"{item.speed:.2f}x{rev_tag}")
+            draw_clip_block(x1, x2, track_y[1], col, item == self.selected_interval, f"⚡ {item.speed:.2f}x{rev_tag}")
 
-        # 3. TEXT CLIPS (Track 1 & 2)
+        # 4. TEXT CLIPS (Track 2 & 3)
         for t_clip in self.text_clips:
-            t_idx = 1 if getattr(t_clip, 'track_index', 0) == 0 else 2
+            t_idx = 2 if getattr(t_clip, 'track_index', 0) == 0 else 3
             x1 = max(115, self._sec_to_x(t_clip.start_sec))
             x2 = min(w, self._sec_to_x(t_clip.end_sec))
             draw_clip_block(x1, x2, track_y[t_idx], QColor("#A6E3A1"), t_clip == self.selected_text_clip, f"💬 {t_clip.text[:10]}", t_clip)
 
-        # 4. IMAGE CLIPS (Track 3)
+        # 5. IMAGE CLIPS (Track 4)
         for img_clip in self.image_clips:
             x1 = max(115, self._sec_to_x(img_clip.start_sec))
             x2 = min(w, self._sec_to_x(img_clip.end_sec))
             bname = os.path.basename(img_clip.image_path)[:10] if img_clip.image_path else "Imagen"
-            draw_clip_block(x1, x2, track_y[3], QColor("#89DCEB"), img_clip == self.selected_image_clip, f"🖼 {bname}", img_clip)
+            draw_clip_block(x1, x2, track_y[4], QColor("#89DCEB"), img_clip == self.selected_image_clip, f"🖼 {bname}", img_clip)
 
-        # 5. VIDEO OVERLAY CLIPS (Track 4)
+        # 6. VIDEO OVERLAY CLIPS (Track 5)
         for v_clip in self.video_clips:
             x1 = max(115, self._sec_to_x(v_clip.start_sec))
             x2 = min(w, self._sec_to_x(v_clip.end_sec))
             bname = os.path.basename(v_clip.video_path)[:10] if v_clip.video_path else "Video PIP"
-            draw_clip_block(x1, x2, track_y[4], QColor("#F9E2AF"), v_clip == self.selected_video_clip, f"📹 {bname}", v_clip)
+            draw_clip_block(x1, x2, track_y[5], QColor("#F9E2AF"), v_clip == self.selected_video_clip, f"📹 {bname}", v_clip)
 
-        # 6. PLAYHEAD
+        # 7. PLAYHEAD
         px = self._sec_to_x(self.current_sec)
         if 115 <= px <= w:
             painter.setPen(QPen(QColor("#F5E0DC"), 2))
@@ -314,7 +320,7 @@ class TimelineCanvas(QWidget):
                 return False
 
             # Check Tracks
-            if 32 <= y <= 72:
+            if 32 <= y <= 72: # Track 0: PISTA RECORTES
                 for item in self.intervals:
                     if check_handle_or_body(item, 32):
                         self.selected_interval = item
@@ -324,9 +330,19 @@ class TimelineCanvas(QWidget):
                         self.interval_selected.emit(item)
                         self.update()
                         return
-            elif 77 <= y <= 162:
+            elif 77 <= y <= 117: # Track 1: PISTA VELOCIDAD
+                for item in self.intervals:
+                    if check_handle_or_body(item, 77):
+                        self.selected_interval = item
+                        self.selected_text_clip = None
+                        self.selected_image_clip = None
+                        self.selected_video_clip = None
+                        self.interval_selected.emit(item)
+                        self.update()
+                        return
+            elif 122 <= y <= 207: # Track 2 & 3: PISTA TEXTO 1 & 2
                 for t_clip in self.text_clips:
-                    if check_handle_or_body(t_clip, 77):
+                    if check_handle_or_body(t_clip, 122):
                         self.selected_text_clip = t_clip
                         self.selected_interval = None
                         self.selected_image_clip = None
@@ -334,9 +350,9 @@ class TimelineCanvas(QWidget):
                         self.text_clip_selected.emit(t_clip)
                         self.update()
                         return
-            elif 167 <= y <= 207:
+            elif 212 <= y <= 252: # Track 4: PISTA IMAGENES
                 for img_clip in self.image_clips:
-                    if check_handle_or_body(img_clip, 167):
+                    if check_handle_or_body(img_clip, 212):
                         self.selected_image_clip = img_clip
                         self.selected_interval = None
                         self.selected_text_clip = None
@@ -344,9 +360,9 @@ class TimelineCanvas(QWidget):
                         self.image_clip_selected.emit(img_clip)
                         self.update()
                         return
-            elif 212 <= y <= 252:
+            elif 257 <= y <= 297: # Track 5: PISTA VIDEO PIP
                 for v_clip in self.video_clips:
-                    if check_handle_or_body(v_clip, 212):
+                    if check_handle_or_body(v_clip, 257):
                         self.selected_video_clip = v_clip
                         self.selected_interval = None
                         self.selected_text_clip = None
