@@ -257,36 +257,35 @@ class VideoPreviewWidget(QWidget):
     def _render_frame(self, frame_bgr):
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         h, w, ch = frame_rgb.shape
+        # Draw active Picture-in-Picture (PIP) video overlays onto frame
+        active_vids = [v for v in getattr(self, 'video_clips', []) if v.is_visible_at(self.current_sec)]
+        if active_vids:
+            for v_clip in active_vids:
+                if not hasattr(self, '_pip_caps'): self._pip_caps = {}
+                if v_clip.video_path not in self._pip_caps: self._pip_caps[v_clip.video_path] = cv2.VideoCapture(v_clip.video_path)
+                if v_clip.video_path in self._pip_caps:
+                    try:
+                        pip_cap = self._pip_caps[v_clip.video_path]
+                        rel_t = self.current_sec - v_clip.start_sec
+                        fps = pip_cap.get(cv2.CAP_PROP_FPS) or 30.0
+                        pip_cap.set(cv2.CAP_PROP_POS_FRAMES, int(rel_t * fps))
+                        ret, pip_frame = pip_cap.read()
+                        if ret:
+                            pip_rgb = cv2.cvtColor(pip_frame, cv2.COLOR_BGR2RGB)
+                            cur_x, cur_y, cur_w, cur_h, _ = v_clip.get_transform_at(self.current_sec) if hasattr(v_clip, 'get_transform_at') else (v_clip.x_ratio, v_clip.y_ratio, v_clip.width_ratio, v_clip.height_ratio, 40)
+                            target_w = max(30, int(w * cur_w))
+                            target_h = max(30, int(h * cur_h))
+                            pip_resized = cv2.resize(pip_rgb, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
 
-        # Draw active secondary PIP videos onto frame using OpenCV
-        active_videos = [v for v in getattr(self, 'video_clips', []) if v.is_visible_at(self.current_sec)]
-        for v_clip in active_videos:
-            if os.path.exists(v_clip.video_path):
-                try:
-                    if not hasattr(self, '_pip_caps'): self._pip_caps = {}
-                    if v_clip.video_path not in self._pip_caps:
-                        self._pip_caps[v_clip.video_path] = cv2.VideoCapture(v_clip.video_path)
-                    
-                    pip_cap = self._pip_caps[v_clip.video_path]
-                    rel_t = self.current_sec - v_clip.start_sec
-                    fps = pip_cap.get(cv2.CAP_PROP_FPS) or 30.0
-                    pip_cap.set(cv2.CAP_PROP_POS_FRAMES, int(rel_t * fps))
-                    ret, pip_frame = pip_cap.read()
-                    if ret:
-                        pip_rgb = cv2.cvtColor(pip_frame, cv2.COLOR_BGR2RGB)
-                        target_w = max(30, int(w * v_clip.width_ratio))
-                        target_h = max(30, int(h * v_clip.height_ratio))
-                        pip_resized = cv2.resize(pip_rgb, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+                            pos_x = int((w - target_w) * cur_x)
+                            pos_y = int((h - target_h) * cur_y)
 
-                        pos_x = int((w - target_w) * v_clip.x_ratio)
-                        pos_y = int((h - target_h) * v_clip.y_ratio)
+                            px1, py1 = max(0, pos_x), max(0, pos_y)
+                            px2, py2 = min(w, pos_x + target_w), min(h, pos_y + target_h)
 
-                        px1, py1 = max(0, pos_x), max(0, pos_y)
-                        px2, py2 = min(w, pos_x + target_w), min(h, pos_y + target_h)
-
-                        frame_rgb[py1:py2, px1:px2] = pip_resized[0:(py2-py1), 0:(px2-px1)]
-                except Exception:
-                    pass
+                            frame_rgb[py1:py2, px1:px2] = pip_resized[0:(py2-py1), 0:(px2-px1)]
+                    except Exception:
+                        pass
 
         # Draw active image overlays onto frame using PIL
         active_imgs = [img for img in getattr(self, 'image_clips', []) if img.is_visible_at(self.current_sec)]
@@ -296,12 +295,13 @@ class VideoPreviewWidget(QWidget):
                 if os.path.exists(img_clip.image_path):
                     try:
                         overlay_img = Image.open(img_clip.image_path).convert("RGBA")
-                        target_w = max(20, int(w * img_clip.width_ratio))
-                        target_h = max(20, int(h * img_clip.height_ratio))
+                        cur_x, cur_y, cur_w, cur_h, _ = img_clip.get_transform_at(self.current_sec) if hasattr(img_clip, 'get_transform_at') else (img_clip.x_ratio, img_clip.y_ratio, img_clip.width_ratio, img_clip.height_ratio, 40)
+                        target_w = max(20, int(w * cur_w))
+                        target_h = max(20, int(h * cur_h))
                         overlay_img = overlay_img.resize((target_w, target_h), Image.Resampling.LANCZOS)
 
-                        pos_x = int((w - target_w) * img_clip.x_ratio)
-                        pos_y = int((h - target_h) * img_clip.y_ratio)
+                        pos_x = int((w - target_w) * cur_x)
+                        pos_y = int((h - target_h) * cur_y)
 
                         pil_img.paste(overlay_img, (pos_x, pos_y), overlay_img)
                     except Exception:
@@ -314,18 +314,17 @@ class VideoPreviewWidget(QWidget):
         draw = ImageDraw.Draw(pil_img)
 
         for sub in active_subs:
-            scaled_size = sub.get_scaled_font_size(h)
-            try:
-                font = ImageFont.truetype(r"C:\Windows\Fonts\arial.ttf", scaled_size)
-            except Exception:
-                font = ImageFont.load_default()
+            cur_x, cur_y, _, _, cur_fs = sub.get_transform_at(self.current_sec) if hasattr(sub, 'get_transform_at') else (sub.x_ratio, sub.y_ratio, 0.3, 0.3, sub.font_size)
+            ref_h = 720.0
+            scaled_size = max(10, int(cur_fs * max(0.2, h / ref_h)))
+            font = self._get_font(scaled_size)
 
             bbox = draw.textbbox((0, 0), sub.text, font=font)
             text_w = bbox[2] - bbox[0]
             text_h = bbox[3] - bbox[1]
 
-            x = int((w - text_w) * sub.x_ratio)
-            y = int((h - text_h) * sub.y_ratio)
+            x = int((w - text_w) * cur_x)
+            y = int((h - text_h) * cur_y)
 
             # Draw outline
             ox, oy = max(1, int(scaled_size / 14)), max(1, int(scaled_size / 14))
@@ -339,21 +338,26 @@ class VideoPreviewWidget(QWidget):
 
         # Draw smooth bounding box with corner handles around selected item
         sel = getattr(self, 'selected_item', None) or getattr(self, '_dragged_item', None)
-        if sel and hasattr(sel, 'x_ratio') and sel.is_visible_at(self.current_sec):
+        if sel and hasattr(sel, 'is_visible_at') and sel.is_visible_at(self.current_sec):
             cur_x, cur_y, cur_w, cur_h, cur_fs = sel.get_transform_at(self.current_sec) if hasattr(sel, 'get_transform_at') else (sel.x_ratio, sel.y_ratio, getattr(sel, 'width_ratio', 0.3), getattr(sel, 'height_ratio', 0.3), getattr(sel, 'font_size', 40))
 
             if hasattr(sel, 'width_ratio'):
                 bw = max(30, int(w * cur_w))
                 bh = max(30, int(h * cur_h))
+                bx = int((w - bw) * cur_x)
+                by = int((h - bh) * cur_y)
             else:
-                # Text element auto-fitting box using font metrics
-                font = self._get_font(cur_fs)
+                # Text element auto-fitting box using EXACT rendered font size & metrics
+                scaled_size = max(10, int(cur_fs * max(0.2, h / 720.0)))
+                font = self._get_font(scaled_size)
                 t_box = draw.textbbox((0, 0), sel.text or "Texto", font=font)
-                bw = max(40, t_box[2] - t_box[0] + 24)
-                bh = max(24, t_box[3] - t_box[1] + 16)
+                text_w = t_box[2] - t_box[0]
+                text_h = t_box[3] - t_box[1]
 
-            bx = int((w - bw) * cur_x)
-            by = int((h - bh) * cur_y)
+                bw = max(40, text_w + 30)
+                bh = max(24, text_h + 20)
+                bx = int((w - text_w) * cur_x) - 15
+                by = int((h - text_h) * cur_y) - 10
 
             # Smooth cyan rectangle with keyframe indicator glow
             box_color = "#F5C2E7" if getattr(sel, 'enable_keyframes', False) else "#89B4FA"
@@ -518,6 +522,25 @@ class VideoPreviewWidget(QWidget):
 
                 item.x_ratio = max(0.0, min(1.0, round(new_bx / denom_w, 3)))
                 item.y_ratio = max(0.0, min(1.0, round(new_by / denom_h, 3)))
+
+            if getattr(item, 'enable_keyframes', False):
+                mid_sec = (item.start_sec + item.end_sec) / 2.0
+                if self.current_sec <= mid_sec:
+                    item.start_x_ratio = item.x_ratio
+                    item.start_y_ratio = item.y_ratio
+                    if hasattr(item, 'width_ratio'):
+                        item.start_width_ratio = item.width_ratio
+                        item.start_height_ratio = item.height_ratio
+                    if hasattr(item, 'font_size'):
+                        item.start_font_size = item.font_size
+                else:
+                    item.end_x_ratio = item.x_ratio
+                    item.end_y_ratio = item.y_ratio
+                    if hasattr(item, 'width_ratio'):
+                        item.end_width_ratio = item.width_ratio
+                        item.end_height_ratio = item.height_ratio
+                    if hasattr(item, 'font_size'):
+                        item.end_font_size = item.font_size
 
             if not getattr(self, '_is_rendering', False):
                 self._is_rendering = True
