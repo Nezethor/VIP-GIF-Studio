@@ -335,65 +335,62 @@ class VideoPreviewWidget(QWidget):
 
     def mousePressEvent(self, event):
         super().mousePressEvent(event)
+        if event.button() != Qt.MouseButton.LeftButton or not self.video_info:
+            return
+
         active_subs = [s for s in self.subtitles if s.is_visible_at(self.current_sec)]
         active_imgs = [img for img in getattr(self, 'image_clips', []) if img.is_visible_at(self.current_sec)]
         active_vids = [v for v in getattr(self, 'video_clips', []) if v.is_visible_at(self.current_sec)]
 
-        if not (active_subs or active_imgs or active_vids) or not self.video_info:
+        if not (active_subs or active_imgs or active_vids):
             return
 
         lbl_pos = self.video_label.mapFrom(self, event.position().toPoint())
-        lbl_w, lbl_h = self.video_label.width(), self.video_label.height()
+        lbl_w, lbl_h = max(1, self.video_label.width()), max(1, self.video_label.height())
 
         if 0 <= lbl_pos.x() <= lbl_w and 0 <= lbl_pos.y() <= lbl_h:
             if active_imgs:
-                self._dragged_img = active_imgs[-1]
-                self._dragged_sub = None
-                self._dragged_vid = None
-                self._update_element_position(lbl_pos.x(), lbl_pos.y(), self._dragged_img)
+                self._dragged_item = active_imgs[-1]
             elif active_vids:
-                self._dragged_vid = active_vids[-1]
-                self._dragged_sub = None
-                self._dragged_img = None
-                self._update_element_position(lbl_pos.x(), lbl_pos.y(), self._dragged_vid)
+                self._dragged_item = active_vids[-1]
             elif active_subs:
-                self._dragged_sub = active_subs[-1]
-                self._dragged_img = None
-                self._dragged_vid = None
-                self._update_element_position(lbl_pos.x(), lbl_pos.y(), self._dragged_sub)
+                self._dragged_item = active_subs[-1]
+
+            if getattr(self, '_dragged_item', None):
+                self._dragged_item.x_ratio = max(0.0, min(1.0, lbl_pos.x() / float(lbl_w)))
+                self._dragged_item.y_ratio = max(0.0, min(1.0, lbl_pos.y() / float(lbl_h)))
 
     def mouseMoveEvent(self, event):
         super().mouseMoveEvent(event)
-        item = getattr(self, '_dragged_img', None) or getattr(self, '_dragged_vid', None) or getattr(self, '_dragged_sub', None)
+        item = getattr(self, '_dragged_item', None)
         if item:
             lbl_pos = self.video_label.mapFrom(self, event.position().toPoint())
-            self._update_element_position(lbl_pos.x(), lbl_pos.y(), item)
+            lbl_w = max(1, self.video_label.width())
+            lbl_h = max(1, self.video_label.height())
+            item.x_ratio = max(0.0, min(1.0, lbl_pos.x() / float(lbl_w)))
+            item.y_ratio = max(0.0, min(1.0, lbl_pos.y() / float(lbl_h)))
+            if not getattr(self, '_is_rendering', False):
+                self._is_rendering = True
+                try:
+                    self.seek_to(self.current_sec)
+                finally:
+                    self._is_rendering = False
 
     def mouseReleaseEvent(self, event):
         super().mouseReleaseEvent(event)
-        self._dragged_sub = None
+        self._dragged_item = None
 
     def _update_sub_position_from_mouse(self, mouse_x: int, mouse_y: int):
-        sub = getattr(self, '_dragged_sub', None)
-        if not sub:
-            return
-
-        lbl_w = max(1, self.video_label.width())
-        lbl_h = max(1, self.video_label.height())
-
-        x_ratio = max(0.0, min(1.0, mouse_x / float(lbl_w)))
-        y_ratio = max(0.0, min(1.0, mouse_y / float(lbl_h)))
-
-        sub.x_ratio = x_ratio
-        sub.y_ratio = y_ratio
-
-        if self.video_info and self.cap:
-            self.seek_to(self.current_sec)
+        pass
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if self.video_info and self.cap:
-            self.seek_to(self.current_sec)
+        if self.video_info and self.cap and not getattr(self, '_is_rendering', False):
+            self._is_rendering = True
+            try:
+                self.seek_to(self.current_sec)
+            finally:
+                self._is_rendering = False
 
     def _on_trim_changed(self, start_sec, end_sec):
         self.start_sec = start_sec
