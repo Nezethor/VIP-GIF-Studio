@@ -2,7 +2,7 @@ import os
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
     QPushButton, QLabel, QFileDialog, QComboBox, QProgressBar,
-    QMessageBox, QFrame, QSplitter, QCheckBox, QDoubleSpinBox
+    QMessageBox, QFrame, QSplitter, QCheckBox, QDoubleSpinBox, QScrollArea
 )
 from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QDesktopServices, QIcon, QPixmap
@@ -84,11 +84,17 @@ class MainWindow(QMainWindow):
 
         splitter.addWidget(left_container)
 
-        # --- RIGHT PANEL: GIF Settings & Subtitles ---
-        right_container = QWidget(self)
+        # --- RIGHT PANEL: Settings & Controls inside ScrollArea ---
+        right_scroll = QScrollArea(splitter)
+        right_scroll.setWidgetResizable(True)
+        right_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        right_scroll.setStyleSheet("QScrollArea { background-color: transparent; border: none; }")
+
+        right_container = QWidget()
         right_layout = QVBoxLayout(right_container)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(10)
+        right_layout.setContentsMargins(5, 5, 5, 5)
+        right_layout.setSpacing(12)
+        right_scroll.setWidget(right_container)
 
         # Info Box
         info_group = QGroupBox("Metadatos del Archivo", right_container)
@@ -113,9 +119,23 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(sub_group)
 
         # Settings Box
-        settings_group = QGroupBox("Ajustes de Calidad y Efectos", right_container)
+        settings_group = QGroupBox("Ajustes de Calidad, Formato y Efectos", right_container)
         settings_layout = QVBoxLayout(settings_group)
         settings_layout.setSpacing(10)
+
+        # Output Format Selector
+        lbl_format = QLabel("Formato de Salida Deseado:", settings_group)
+        self.combo_format = QComboBox(settings_group)
+        self.combo_format.addItems([
+            "Mismo Formato de Origen (Auto-detectar)",
+            "Imagen GIF (.gif)",
+            "Video MP4 (.mp4)",
+            "Video WebM (.webm)",
+            "Video AVI (.avi)",
+            "Video MOV (.mov)"
+        ])
+        settings_layout.addWidget(lbl_format)
+        settings_layout.addWidget(self.combo_format)
 
         # Resolution / Scale
         lbl_scale = QLabel("Resolución / Ancho:", settings_group)
@@ -196,33 +216,36 @@ class MainWindow(QMainWindow):
 
         right_layout.addWidget(settings_group)
 
-        # Primary Convert Action
-        right_layout.addStretch()
+        # Export Action Box
+        export_group = QGroupBox("Exportar y Generar Archivo", right_container)
+        export_layout = QVBoxLayout(export_group)
 
-        self.btn_convert = QPushButton("⚡ GENERAR GIF DE MÁXIMA CALIDAD", right_container)
+        self.btn_convert = QPushButton("⚡ GENERAR Y GUARDAR (GIF / VIDEO)", export_group)
         self.btn_convert.setObjectName("primaryButton")
         self.btn_convert.setEnabled(False)
         self.btn_convert.clicked.connect(self._start_conversion)
-        right_layout.addWidget(self.btn_convert)
+        export_layout.addWidget(self.btn_convert)
 
         # Progress Section
-        self.progress_bar = QProgressBar(right_container)
+        self.progress_bar = QProgressBar(export_group)
         self.progress_bar.setValue(0)
         self.progress_bar.setVisible(False)
-        right_layout.addWidget(self.progress_bar)
+        export_layout.addWidget(self.progress_bar)
 
-        self.lbl_status = QLabel("", right_container)
+        self.lbl_status = QLabel("", export_group)
         self.lbl_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_status.setStyleSheet("color: #F5C2E7; font-weight: 500;")
-        right_layout.addWidget(self.lbl_status)
+        export_layout.addWidget(self.lbl_status)
 
-        self.btn_open_folder = QPushButton("📂 Abrir Carpeta de Destino", right_container)
+        self.btn_open_folder = QPushButton("📂 Abrir Carpeta de Destino", export_group)
         self.btn_open_folder.setVisible(False)
         self.btn_open_folder.clicked.connect(self._open_output_folder)
-        right_layout.addWidget(self.btn_open_folder)
+        export_layout.addWidget(self.btn_open_folder)
 
-        splitter.addWidget(right_container)
-        splitter.setSizes([720, 410])
+        right_layout.addWidget(export_group)
+
+        splitter.addWidget(right_scroll)
+        splitter.setSizes([700, 430])
 
         main_layout.addWidget(splitter)
 
@@ -312,20 +335,41 @@ class MainWindow(QMainWindow):
         if not self.current_video_path:
             return
 
-        base_ext = os.path.splitext(self.current_video_path)[1].lower()
-        if not base_ext or base_ext == '.gif':
-            base_ext = '.gif'
+        fmt_idx = self.combo_format.currentIndex()
+        orig_ext = os.path.splitext(self.current_video_path)[1].lower()
+        if not orig_ext:
+            orig_ext = ".gif"
+
+        if fmt_idx == 0:    # Mismo Formato de Origen
+            target_ext = orig_ext
+        elif fmt_idx == 1:  # GIF
+            target_ext = ".gif"
+        elif fmt_idx == 2:  # MP4
+            target_ext = ".mp4"
+        elif fmt_idx == 3:  # WebM
+            target_ext = ".webm"
+        elif fmt_idx == 4:  # AVI
+            target_ext = ".avi"
+        elif fmt_idx == 5:  # MOV
+            target_ext = ".mov"
         else:
-            base_ext = '.mp4'
+            target_ext = orig_ext
 
         base_name = os.path.splitext(os.path.basename(self.current_video_path))[0]
-        default_output = os.path.join(os.path.dirname(self.current_video_path), f"{base_name}_editado{base_ext}")
+        default_output = os.path.join(os.path.dirname(self.current_video_path), f"{base_name}_editado{target_ext}")
+
+        if target_ext == ".gif":
+            filter_str = "Imagen GIF (*.gif);;Video MP4 (*.mp4);;Todos los Formatos (*.gif *.mp4 *.webm *.avi *.mov)"
+        elif target_ext == ".mp4":
+            filter_str = "Video MP4 (*.mp4);;Imagen GIF (*.gif);;Todos los Formatos (*.gif *.mp4 *.webm *.avi *.mov)"
+        else:
+            filter_str = f"Video (*{target_ext});;Imagen GIF (*.gif);;Video MP4 (*.mp4);;Todos los Formatos (*.*)"
 
         output_path, selected_filter = QFileDialog.getSaveFileName(
             self,
-            "Guardar Edición como GIF o Video",
+            f"Guardar Edición como {target_ext.upper()}",
             default_output,
-            "Todos los Formatos (*.gif *.mp4 *.webm *.avi *.mov);;Video MP4 (*.mp4);;Imagen GIF (*.gif);;Video WebM (*.webm);;Video AVI (*.avi);;Video MOV (*.mov)"
+            filter_str
         )
 
         if not output_path:
