@@ -133,14 +133,16 @@ class SubtitleManagerDialog(QDialog):
 
         layout.addLayout(bottom_layout)
 
-    def _refresh_list(self):
+    def _refresh_list(self, target_row: int = 0):
         self.list_widget.clear()
         for idx, sub in enumerate(self.subtitles):
             item_str = f"[{sub.start_sec:.2f}s - {sub.end_sec:.2f}s]  \"{sub.text}\""
             self.list_widget.addItem(QListWidgetItem(item_str))
-        
+
         if self.subtitles:
-            self.list_widget.setCurrentRow(0)
+            valid_row = max(0, min(len(self.subtitles) - 1, target_row))
+            self.list_widget.setCurrentRow(valid_row)
+            self._on_item_selected(valid_row)
             self.edit_group.setEnabled(True)
         else:
             self.edit_group.setEnabled(False)
@@ -148,17 +150,18 @@ class SubtitleManagerDialog(QDialog):
     def _add_new_subtitle(self):
         start = self.current_sec
         end = min(self.video_duration, start + 3.0)
-        new_sub = SubtitleItem(text="Nuevo Subtítulo", start_sec=start, end_sec=end, font_size=28)
+        new_sub = SubtitleItem(text="Nuevo Subtítulo", start_sec=start, end_sec=end, font_size=36)
         self.subtitles.append(new_sub)
-        self._refresh_list()
-        self.list_widget.setCurrentRow(len(self.subtitles) - 1)
+        new_index = len(self.subtitles) - 1
+        self._refresh_list(target_row=new_index)
         self.subtitles_changed.emit(self.subtitles)
 
     def _delete_subtitle(self):
         row = self.list_widget.currentRow()
         if 0 <= row < len(self.subtitles):
             self.subtitles.pop(row)
-            self._refresh_list()
+            next_row = max(0, row - 1)
+            self._refresh_list(target_row=next_row)
             self.subtitles_changed.emit(self.subtitles)
 
     def _on_item_selected(self, row):
@@ -205,6 +208,5 @@ class SubtitleManagerDialog(QDialog):
             elif pos_idx == 2: sub.x_ratio, sub.y_ratio = 0.5, 0.08  # Arriba
             elif pos_idx == 3: sub.x_ratio, sub.y_ratio = 0.05, 0.08 # Top left
             elif pos_idx == 4: sub.x_ratio, sub.y_ratio = 0.95, 0.08 # Top right
-
-            self._refresh_list()
+            self._refresh_list(target_row=row)
             self.subtitles_changed.emit(self.subtitles)

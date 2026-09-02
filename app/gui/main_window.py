@@ -150,32 +150,37 @@ class MainWindow(QMainWindow):
         settings_layout.addWidget(lbl_scale)
         settings_layout.addWidget(self.combo_scale)
 
-        # FPS Selection
+        # FPS Selection (Default 30 FPS)
         lbl_fps = QLabel("Fotogramas por Segundo (FPS):", settings_group)
         self.combo_fps = QComboBox(settings_group)
         self.combo_fps.addItems([
-            "15 FPS (Recomendado - Tamaño Óptimo)",
+            "30 FPS (Máxima Fluidez - Por Defecto)",
             "24 FPS (Fluidez Cine)",
-            "30 FPS (Máxima Fluidez)",
+            "15 FPS (Recomendado - Tamaño Óptimo)",
             "10 FPS (Archivo Pequeño)"
         ])
+        self.combo_fps.setCurrentIndex(0)
         settings_layout.addWidget(lbl_fps)
         settings_layout.addWidget(self.combo_fps)
 
-        # Speed Control (0.1x to 10.0x)
-        lbl_speed = QLabel("Velocidad de Reproducción (0.1x - 10.0x):", settings_group)
+        # Speed Control (-10.0x to +10.0x with negative reverse speed)
+        lbl_speed = QLabel("Velocidad de Reproducción (-10.0x a 10.0x):", settings_group)
         speed_h_layout = QHBoxLayout()
 
         self.spn_speed = QDoubleSpinBox(settings_group)
-        self.spn_speed.setRange(0.10, 10.00)
+        self.spn_speed.setRange(-10.00, 10.00)
         self.spn_speed.setValue(1.00)
         self.spn_speed.setSingleStep(0.25)
         self.spn_speed.setSuffix(" x")
         speed_h_layout.addWidget(self.spn_speed)
 
-        btn_speed_05 = QPushButton("0.5x", settings_group)
-        btn_speed_05.setFixedWidth(45)
-        btn_speed_05.clicked.connect(lambda: self.spn_speed.setValue(0.5))
+        btn_speed_neg2 = QPushButton("-2.0x", settings_group)
+        btn_speed_neg2.setFixedWidth(45)
+        btn_speed_neg2.clicked.connect(lambda: self.spn_speed.setValue(-2.0))
+
+        btn_speed_neg1 = QPushButton("-1.0x", settings_group)
+        btn_speed_neg1.setFixedWidth(45)
+        btn_speed_neg1.clicked.connect(lambda: self.spn_speed.setValue(-1.0))
 
         btn_speed_1 = QPushButton("1.0x", settings_group)
         btn_speed_1.setFixedWidth(45)
@@ -189,7 +194,8 @@ class MainWindow(QMainWindow):
         btn_speed_5.setFixedWidth(45)
         btn_speed_5.clicked.connect(lambda: self.spn_speed.setValue(5.0))
 
-        speed_h_layout.addWidget(btn_speed_05)
+        speed_h_layout.addWidget(btn_speed_neg2)
+        speed_h_layout.addWidget(btn_speed_neg1)
         speed_h_layout.addWidget(btn_speed_1)
         speed_h_layout.addWidget(btn_speed_2)
         speed_h_layout.addWidget(btn_speed_5)
@@ -311,9 +317,9 @@ class MainWindow(QMainWindow):
 
     def _get_selected_fps(self) -> int:
         idx = self.combo_fps.currentIndex()
-        if idx == 0: return 15
+        if idx == 0: return 30
         elif idx == 1: return 24
-        elif idx == 2: return 30
+        elif idx == 2: return 15
         else: return 10
 
     def _get_selected_dither(self) -> str:
@@ -322,14 +328,6 @@ class MainWindow(QMainWindow):
         elif idx == 1: return "floyd_steinberg"
         elif idx == 2: return "bayer:bayer_scale=5"
         else: return "none"
-
-    def _get_selected_speed(self) -> float:
-        idx = self.combo_speed.currentIndex()
-        if idx == 0: return 1.0
-        elif idx == 1: return 1.25
-        elif idx == 2: return 1.5
-        elif idx == 3: return 2.0
-        else: return 0.5
 
     def _start_conversion(self):
         if not self.current_video_path:
@@ -382,8 +380,10 @@ class MainWindow(QMainWindow):
         fps = self._get_selected_fps()
         scale_width = self._get_selected_scale()
         dither = self._get_selected_dither()
-        speed = self.spn_speed.value()
-        reverse = self.chk_reverse.isChecked()
+
+        raw_speed = self.spn_speed.value()
+        speed = abs(raw_speed) if raw_speed != 0 else 1.0
+        reverse = self.chk_reverse.isChecked() or (raw_speed < 0)
 
         self.btn_convert.setEnabled(False)
         self.btn_select_file.setEnabled(False)

@@ -94,6 +94,26 @@ class MediaConverterWorker(QThread):
 
         return drawtext_filters
 
+    def _build_audio_filter_chain(self):
+        """Construct FFmpeg audio filter string to match playback speed and audio reversal."""
+        af_filters = []
+        if self.reverse:
+            af_filters.append("areverse")
+
+        speed = self.speed
+        # FFmpeg atempo filter requires values between 0.5 and 2.0
+        while speed > 2.0:
+            af_filters.append("atempo=2.0")
+            speed /= 2.0
+        while speed < 0.5:
+            af_filters.append("atempo=0.5")
+            speed /= 0.5
+
+        if abs(speed - 1.0) > 0.001:
+            af_filters.append(f"atempo={speed:.4f}")
+
+        return ",".join(af_filters) if af_filters else "anull"
+
     def run(self):
         try:
             ffmpeg_exe = get_ffmpeg_path()
@@ -133,8 +153,9 @@ class MediaConverterWorker(QThread):
             base_vf = ",".join(filters_list)
 
             if is_video_export:
-                # Direct Video Export (H.264 MP4 High Quality)
-                self.progress_changed.emit(20, "Exportando como archivo de video de alta definición...")
+                # Direct Video Export (H.264 MP4 High Quality with Synced Audio)
+                self.progress_changed.emit(20, "Exportando video con audio sincronizado y subtítulos...")
+                af_chain = self._build_audio_filter_chain()
 
                 cmd_video = [
                     ffmpeg_exe, "-y",
@@ -142,7 +163,9 @@ class MediaConverterWorker(QThread):
                     "-t", f"{duration:.3f}",
                     "-i", self.input_path,
                     "-vf", base_vf,
+                    "-af", af_chain,
                     "-c:v", "libx264",
+                    "-c:a", "aac",
                     "-pix_fmt", "yuv420p",
                     "-preset", "medium",
                     "-crf", "20",
