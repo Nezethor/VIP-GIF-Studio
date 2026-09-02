@@ -363,6 +363,7 @@ class TimelineWidget(QWidget):
     """
     playhead_moved = pyqtSignal(float)
     timeline_updated = pyqtSignal()
+    clip_selected = pyqtSignal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -532,6 +533,9 @@ class TimelineWidget(QWidget):
 
     def _on_text_clip_selected(self, t_clip: TimelineTextClip):
         self.canvas.selected_text_clip = t_clip
+        self.canvas.selected_image_clip = None
+        self.canvas.selected_video_clip = None
+        self.clip_selected.emit(t_clip)
         self.spn_block_speed.setVisible(False)
         self.txt_clip_content.setVisible(True)
         self.spn_font_size.setVisible(True)
@@ -558,6 +562,10 @@ class TimelineWidget(QWidget):
             self.lbl_insp_info.setText("Subtítulo en Línea de Tiempo:")
 
     def _on_image_clip_selected(self, img_clip: TimelineImageClip):
+        self.canvas.selected_image_clip = img_clip
+        self.canvas.selected_text_clip = None
+        self.canvas.selected_video_clip = None
+        self.clip_selected.emit(img_clip)
         self.spn_block_speed.setVisible(False)
         self.txt_clip_content.setVisible(False)
         self.spn_font_size.setVisible(False)
@@ -576,6 +584,10 @@ class TimelineWidget(QWidget):
             self.lbl_insp_info.setText(f"Imagen: {os.path.basename(img_clip.image_path)}")
 
     def _on_video_clip_selected(self, v_clip: TimelineVideoClip):
+        self.canvas.selected_video_clip = v_clip
+        self.canvas.selected_text_clip = None
+        self.canvas.selected_image_clip = None
+        self.clip_selected.emit(v_clip)
         self.txt_clip_content.setVisible(False)
         self.spn_font_size.setVisible(False)
         self.spn_start_sec.setVisible(True)

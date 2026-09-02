@@ -370,27 +370,42 @@ class VideoPreviewWidget(QWidget):
         lbl_pos = self.video_label.mapFrom(self, event.position().toPoint())
         lbl_w, lbl_h = max(1, self.video_label.width()), max(1, self.video_label.height())
 
-        # Only drag item that is currently selected in timeline
+        # Strict selection priority: ONLY drag/resize currently selected item from timeline
         sel = getattr(self, 'selected_item', None)
+        
+        if not sel or not (hasattr(sel, 'is_visible_at') and sel.is_visible_at(self.current_sec)):
+            active_subs = [s for s in self.subtitles if s.is_visible_at(self.current_sec)]
+            active_imgs = [img for img in getattr(self, 'image_clips', []) if img.is_visible_at(self.current_sec)]
+            active_vids = [v for v in getattr(self, 'video_clips', []) if v.is_visible_at(self.current_sec)]
+            if active_imgs: sel = active_imgs[-1]
+            elif active_vids: sel = active_vids[-1]
+            elif active_subs: sel = active_subs[-1]
+
         if sel and hasattr(sel, 'is_visible_at') and sel.is_visible_at(self.current_sec):
             self._dragged_item = sel
-            self._is_resizing = False
+            self._resize_corner = None
 
-            # Check if clicked near bottom-right corner handle for resizing
             if hasattr(sel, 'width_ratio'):
-                bw = int(lbl_w * sel.width_ratio)
-                bh = int(lbl_h * sel.height_ratio)
+                bw = max(30, int(lbl_w * sel.width_ratio))
+                bh = max(30, int(lbl_h * sel.height_ratio))
             else:
                 bw, bh = 150, 40
 
             bx = int((lbl_w - bw) * sel.x_ratio)
             by = int((lbl_h - bh) * sel.y_ratio)
 
-            if abs(lbl_pos.x() - (bx + bw)) <= 20 and abs(lbl_pos.y() - (by + bh)) <= 20:
-                self._is_resizing = True
+            r = 20
+            if abs(lbl_pos.x() - bx) <= r and abs(lbl_pos.y() - by) <= r:
+                self._resize_corner = "TL"
+            elif abs(lbl_pos.x() - (bx + bw)) <= r and abs(lbl_pos.y() - by) <= r:
+                self._resize_corner = "TR"
+            elif abs(lbl_pos.x() - bx) <= r and abs(lbl_pos.y() - (by + bh)) <= r:
+                self._resize_corner = "BL"
+            elif abs(lbl_pos.x() - (bx + bw)) <= r and abs(lbl_pos.y() - (by + bh)) <= r:
+                self._resize_corner = "BR"
             else:
-                sel.x_ratio = max(0.0, min(1.0, lbl_pos.x() / float(lbl_w)))
-                sel.y_ratio = max(0.0, min(1.0, lbl_pos.y() / float(lbl_h)))
+                self._drag_offset_x = lbl_pos.x() - bx
+                self._drag_offset_y = lbl_pos.y() - by
 
     def mouseMoveEvent(self, event):
         super().mouseMoveEvent(event)
@@ -400,12 +415,29 @@ class VideoPreviewWidget(QWidget):
             lbl_w = max(1, self.video_label.width())
             lbl_h = max(1, self.video_label.height())
 
-            if getattr(self, '_is_resizing', False):
-                bx = int((lbl_w - max(30, int(lbl_w * getattr(item, 'width_ratio', 0.2)))) * item.x_ratio)
-                by = int((lbl_h - max(30, int(lbl_h * getattr(item, 'height_ratio', 0.2)))) * item.y_ratio)
+            corner = getattr(self, '_resize_corner', None)
+            if corner:
+                bw = max(30, int(lbl_w * getattr(item, 'width_ratio', 0.2)))
+                bh = max(30, int(lbl_h * getattr(item, 'height_ratio', 0.2)))
+                bx = int((lbl_w - bw) * item.x_ratio)
+                by = int((lbl_h - bh) * item.y_ratio)
 
-                new_w = max(30, lbl_pos.x() - bx)
-                new_h = max(30, lbl_pos.y() - by)
+                if corner == "BR":
+                    new_w = max(30, lbl_pos.x() - bx)
+                    new_h = max(30, lbl_pos.y() - by)
+                elif corner == "BL":
+                    new_w = max(30, (bx + bw) - lbl_pos.x())
+                    new_h = max(30, lbl_pos.y() - by)
+                    item.x_ratio = max(0.0, min(1.0, lbl_pos.x() / float(lbl_w)))
+                elif corner == "TR":
+                    new_w = max(30, lbl_pos.x() - bx)
+                    new_h = max(30, (by + bh) - lbl_pos.y())
+                    item.y_ratio = max(0.0, min(1.0, lbl_pos.y() / float(lbl_h)))
+                elif corner == "TL":
+                    new_w = max(30, (bx + bw) - lbl_pos.x())
+                    new_h = max(30, (by + bh) - lbl_pos.y())
+                    item.x_ratio = max(0.0, min(1.0, lbl_pos.x() / float(lbl_w)))
+                    item.y_ratio = max(0.0, min(1.0, lbl_pos.y() / float(lbl_h)))
 
                 if hasattr(item, 'width_ratio'):
                     item.width_ratio = round(max(0.05, min(1.0, new_w / float(lbl_w))), 3)
@@ -413,8 +445,12 @@ class VideoPreviewWidget(QWidget):
                 elif hasattr(item, 'font_size'):
                     item.font_size = max(10, min(200, int(new_h * 0.8)))
             else:
-                item.x_ratio = max(0.0, min(1.0, lbl_pos.x() / float(lbl_w)))
-                item.y_ratio = max(0.0, min(1.0, lbl_pos.y() / float(lbl_h)))
+                off_x = getattr(self, '_drag_offset_x', 0)
+                off_y = getattr(self, '_drag_offset_y', 0)
+                new_bx = lbl_pos.x() - off_x
+                new_by = lbl_pos.y() - off_y
+                item.x_ratio = max(0.0, min(1.0, new_bx / float(lbl_w)))
+                item.y_ratio = max(0.0, min(1.0, new_by / float(lbl_h)))
 
             if not getattr(self, '_is_rendering', False):
                 self._is_rendering = True

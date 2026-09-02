@@ -74,14 +74,21 @@ class MainWindow(QMainWindow):
         left_layout.setSpacing(8)
 
         self.video_player = VideoPreviewWidget(left_container)
-        left_layout.addWidget(self.video_player)
-
-        # Photoshop-style Multi-Track Timeline
         self.timeline = TimelineWidget(left_container)
+
+        # Left Splitter (Vertical: Top Preview, Bottom Timeline)
+        left_vsplitter = QSplitter(Qt.Orientation.Vertical, left_container)
+        left_vsplitter.setChildrenCollapsible(False)
+        left_vsplitter.addWidget(self.video_player)
+        left_vsplitter.addWidget(self.timeline)
+        left_vsplitter.setStretchFactor(0, 6)
+        left_vsplitter.setStretchFactor(1, 4)
+        left_layout.addWidget(left_vsplitter)
+
         self.video_player.positionChanged.connect(self.timeline.set_current_sec)
         self.timeline.playhead_moved.connect(self.video_player.seek_to)
         self.timeline.timeline_updated.connect(self._on_timeline_updated)
-        left_layout.addWidget(self.timeline)
+        self.timeline.clip_selected.connect(self._on_clip_selected)
 
         splitter.addWidget(left_container)
 
@@ -292,6 +299,11 @@ class MainWindow(QMainWindow):
         self.subtitles = new_subtitles
         self.video_player.set_subtitles(self.subtitles)
         self.lbl_sub_count.setText(f"Subtítulos agregados: {len(self.subtitles)}")
+
+    def _on_clip_selected(self, item):
+        self.video_player.selected_item = item
+        if self.video_player.cap and not self.video_player.timer.isActive():
+            self.video_player.seek_to(self.video_player.current_sec)
 
     def _on_timeline_updated(self):
         combined = list(self.subtitles) + list(self.timeline.canvas.text_clips)
