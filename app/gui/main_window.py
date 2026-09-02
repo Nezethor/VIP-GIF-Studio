@@ -10,7 +10,8 @@ from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QDesktopServices, QIcon, QP
 from app.gui.styles import DARK_STYLESHEET
 from app.gui.video_player import VideoPreviewWidget
 from app.gui.subtitle_dialog import SubtitleManagerDialog
-from app.core.converter import GifConverterWorker
+from app.gui.timeline_widget import TimelineWidget
+from app.core.converter import MediaConverterWorker, GifConverterWorker
 from app.core.video_info import VideoInfo
 
 class MainWindow(QMainWindow):
@@ -19,68 +20,63 @@ class MainWindow(QMainWindow):
     """
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("VIP GIF Studio - Convertidor de Video y GIF")
-        self.resize(1150, 780)
-        self.setMinimumSize(850, 600)
+        self.setWindowTitle("VIP GIF Studio - Convertidor de Video y GIF Profesional")
+        self.resize(1200, 840)
+        self.setMinimumSize(900, 650)
         self.setAcceptDrops(True)
 
-        # Set Window Icon
+        self.current_video_path = ""
+        self.subtitles = []
+        self._init_ui()
+
+    def _init_ui(self):
         icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "assets", "icon.png")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
 
-        self.current_video_path = ""
-        self.subtitles = []
-        self.worker = None
-
         self.setStyleSheet(DARK_STYLESHEET)
-        self._init_ui(icon_path)
 
-    def _init_ui(self, icon_path=""):
         central_widget = QWidget(self)
         self.setCentralWidget(central_widget)
 
         main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(16, 16, 16, 16)
-        main_layout.setSpacing(12)
+        main_layout.setContentsMargins(12, 12, 12, 12)
+        main_layout.setSpacing(10)
 
-        # Header Title Bar with Movie Clapperboard Logo
+        # Header bar
         header_layout = QHBoxLayout()
-        header_layout.setSpacing(10)
-
-        if icon_path and os.path.exists(icon_path):
-            logo_label = QLabel(self)
-            pix = QPixmap(icon_path).scaled(36, 36, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-            logo_label.setPixmap(pix)
-            header_layout.addWidget(logo_label)
-
-        title_label = QLabel("VIP GIF Studio", self)
-        title_label.setStyleSheet("font-size: 22px; font-weight: bold; color: #89B4FA;")
-        subtitle_label = QLabel("Convertidor Profesional de Video y GIF", self)
-        subtitle_label.setStyleSheet("font-size: 13px; color: #A6ADC8; margin-left: 6px;")
-
-        header_layout.addWidget(title_label)
-        header_layout.addWidget(subtitle_label)
-        header_layout.addStretch()
-
-        self.btn_select_file = QPushButton("📁 Abrir Video o GIF (MP4, FLV, GIF...)", self)
-        self.btn_select_file.setObjectName("fileButton")
+        self.btn_select_file = QPushButton("📁 Abrir Video o GIF", central_widget)
+        self.btn_select_file.setObjectName("primaryButton")
+        self.btn_select_file.setIcon(QIcon.fromTheme("document-open"))
         self.btn_select_file.clicked.connect(self._select_video_file)
         header_layout.addWidget(self.btn_select_file)
 
+        self.lbl_file_path = QLabel("Arrastra un archivo aquí o presiona Abrir Video/GIF", central_widget)
+        self.lbl_file_path.setStyleSheet("color: #A6ADC8; font-size: 13px;")
+        header_layout.addWidget(self.lbl_file_path)
+        header_layout.addStretch()
+
         main_layout.addLayout(header_layout)
 
-        # Splitter Layout (Left: Video Player & Trim, Right: Conversion Settings)
+        # Splitter Layout (Left: Video Player & Photoshop Timeline, Right: Settings)
         splitter = QSplitter(Qt.Orientation.Horizontal, self)
         splitter.setChildrenCollapsible(False)
 
-        # --- LEFT PANEL: Video Player ---
+        # --- LEFT PANEL: Video Player & Photoshop Multi-track Timeline ---
         left_container = QWidget(self)
         left_layout = QVBoxLayout(left_container)
         left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(8)
 
         self.video_player = VideoPreviewWidget(left_container)
         left_layout.addWidget(self.video_player)
+
+        # Photoshop-style Multi-Track Timeline
+        self.timeline = TimelineWidget(left_container)
+        self.video_player.positionChanged.connect(self.timeline.set_current_sec)
+        self.timeline.playhead_moved.connect(self.video_player.seek_to)
+        self.timeline.timeline_updated.connect(self._on_timeline_updated)
+        left_layout.addWidget(self.timeline)
 
         splitter.addWidget(left_container)
 
@@ -284,6 +280,10 @@ class MainWindow(QMainWindow):
         self.video_player.set_subtitles(self.subtitles)
         self.lbl_sub_count.setText(f"Subtítulos agregados: {len(self.subtitles)}")
 
+    def _on_timeline_updated(self):
+        combined = list(self.subtitles) + list(self.timeline.canvas.text_clips)
+        self.video_player.set_subtitles(combined)
+
     def _load_video_file(self, file_path: str):
         if not os.path.exists(file_path):
             return
@@ -294,6 +294,8 @@ class MainWindow(QMainWindow):
             info = self.video_player.video_info
             size_mb = os.path.getsize(file_path) / (1024 * 1024)
             
+            self.timeline.set_duration(info.duration)
+
             self.lbl_info.setText(
                 f"<b>Archivo:</b> {info.filename}<br>"
                 f"<b>Resolución:</b> {info.width}x{info.height} px<br>"
@@ -399,7 +401,7 @@ class MainWindow(QMainWindow):
         else:
             self.lbl_status.setText("Generando GIF de alta calidad... Por favor espera.")
 
-        self.worker = GifConverterWorker(
+        self.worker = MediaConverterWorker(
             input_path=self.current_video_path,
             output_path=output_path,
             start_sec=start_sec,
@@ -409,7 +411,9 @@ class MainWindow(QMainWindow):
             dither=dither,
             speed=speed,
             reverse=reverse,
-            subtitles=self.subtitles
+            subtitles=self.subtitles,
+            timeline_intervals=self.timeline.canvas.intervals,
+            timeline_texts=self.timeline.canvas.text_clips
         )
         self.worker.progress_changed.connect(self._on_progress)
         self.worker.conversion_finished.connect(self._on_finished)

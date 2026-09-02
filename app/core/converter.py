@@ -48,6 +48,8 @@ class MediaConverterWorker(QThread):
                  speed: float = 1.0,
                  reverse: bool = False,
                  subtitles: list = None,
+                 timeline_intervals: list = None,
+                 timeline_texts: list = None,
                  parent=None):
         super().__init__(parent)
         self.input_path = input_path
@@ -59,7 +61,10 @@ class MediaConverterWorker(QThread):
         self.dither = dither
         self.speed = max(0.1, min(10.0, speed))
         self.reverse = reverse
-        self.subtitles = subtitles or []
+        self.subtitles = list(subtitles or [])
+        if timeline_texts:
+            self.subtitles.extend(timeline_texts)
+        self.timeline_intervals = timeline_intervals or []
         self._is_cancelled = False
 
     def cancel(self):
@@ -152,7 +157,99 @@ class MediaConverterWorker(QThread):
 
             base_vf = ",".join(filters_list)
 
-            if is_video_export:
+            if len(self.timeline_intervals) > 1:
+                # Multi-interval Timeline Processing Mode
+                self.progress_changed.emit(10, "Procesando múltiple intervalos de velocidad de línea de tiempo...")
+                v_concat_inputs = []
+                a_concat_inputs = []
+                filter_parts = []
+
+                for idx, item in enumerate(self.timeline_intervals):
+                    pts_m = 1.0 / item.speed if item.speed > 0 else 1.0
+                    v_lbl = f"v{idx}"
+                    a_lbl = f"a{idx}"
+
+                    vf_parts = [
+                        f"trim=start={item.start_sec:.3f}:end={item.end_sec:.3f}",
+                        "setpts=PTS-STARTPTS",
+                        f"setpts={pts_m:.4f}*PTS"
+                    ]
+                    if item.reverse:
+                        vf_parts.append("reverse")
+
+                    filter_parts.append(f"[0:v]{','.join(vf_parts)}[{v_lbl}]")
+                    v_concat_inputs.append(f"[{v_lbl}]")
+
+                    af_parts = [
+                        f"atrim=start={item.start_sec:.3f}:end={item.end_sec:.3f}",
+                        "asetpts=PTS-STARTPTS"
+                    ]
+                    if item.reverse:
+                        af_parts.append("areverse")
+
+                    spd = item.speed
+                    while spd > 2.0:
+                        af_parts.append("atempo=2.0")
+                        spd /= 2.0
+                    while spd < 0.5:
+                        af_parts.append("atempo=0.5")
+                        spd /= 0.5
+                    if abs(spd - 1.0) > 0.001:
+                        af_parts.append(f"atempo={spd:.4f}")
+
+                    filter_parts.append(f"[0:a]{','.join(af_parts)}[{a_lbl}]")
+                    a_concat_inputs.append(f"[{a_lbl}]")
+
+                n_segs = len(self.timeline_intervals)
+                filter_parts.append(f"{''.join(v_concat_inputs)}concat=n={n_segs}:v=1:a=0[rawv]")
+                filter_parts.append(f"{''.join(a_concat_inputs)}concat=n={n_segs}:v=0:a=1[outa]")
+
+                drawtext_filters = self._build_drawtext_filters(actual_height=actual_h)
+                final_vf = [f"fps={self.target_fps}", scale_str]
+                final_vf.extend(drawtext_filters)
+
+                filter_parts.append(f"[rawv]{','.join(final_vf)}[outv]")
+                full_filter_complex = ";".join(filter_parts)
+
+                if is_video_export:
+                    cmd_video = [
+                        ffmpeg_exe, "-y",
+                        "-i", self.input_path,
+                        "-filter_complex", full_filter_complex,
+                        "-map", "[outv]",
+                        "-map", "[outa]",
+                        "-c:v", "libx264",
+                        "-c:a", "aac",
+                        "-pix_fmt", "yuv420p",
+                        "-preset", "medium",
+                        "-crf", "20",
+                        self.output_path
+                    ]
+                    self._run_cmd(cmd_video, progress_offset=20, progress_range=75)
+                else:
+                    palette_file = self.output_path + ".palette.png"
+                    cmd_pass1 = [
+                        ffmpeg_exe, "-y",
+                        "-i", self.input_path,
+                        "-filter_complex", f"{full_filter_complex};[outv]palettegen=stats_mode=full:max_colors=256[pal]",
+                        "-map", "[pal]",
+                        palette_file
+                    ]
+                    self._run_cmd(cmd_pass1, progress_offset=5, progress_range=35)
+
+                    dither_option = f"dither={self.dither}:diff_mode=rectangle" if self.dither != "none" else "dither=none"
+                    cmd_pass2 = [
+                        ffmpeg_exe, "-y",
+                        "-i", self.input_path,
+                        "-i", palette_file,
+                        "-filter_complex", f"{full_filter_complex};[outv][1:v]paletteuse={dither_option}[gifout]",
+                        "-map", "[gifout]",
+                        self.output_path
+                    ]
+                    self._run_cmd(cmd_pass2, progress_offset=40, progress_range=55)
+                    self._clean_palette(palette_file)
+
+            elif is_video_export:
                 # Direct Video Export (H.264 MP4 High Quality with Synced Audio)
                 self.progress_changed.emit(20, "Exportando video con audio sincronizado y subtítulos...")
                 af_chain = self._build_audio_filter_chain()
