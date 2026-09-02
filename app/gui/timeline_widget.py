@@ -43,6 +43,10 @@ class TimelineCanvas(QWidget):
         self.image_clips = []
         self.video_clips = []
 
+        self.extra_text_tracks = 0
+        self.extra_image_tracks = 0
+        self.extra_video_tracks = 0
+
         self.selected_interval = self.intervals[0]
         self.selected_text_clip = None
         self.selected_image_clip = None
@@ -57,6 +61,42 @@ class TimelineCanvas(QWidget):
         self._drag_start_x = 0
         self._drag_orig_start = 0.0
         self._drag_orig_end = 0.0
+        self._update_height()
+
+    def _get_track_layout(self):
+        tracks = [
+            ("PISTA RECORTES", "recortes", 0),
+            ("PISTA VELOCIDAD", "velocidad", 0),
+            ("PISTA TEXTO 1", "text", 0),
+            ("PISTA TEXTO 2", "text", 1),
+        ]
+        for i in range(self.extra_text_tracks):
+            tracks.append((f"PISTA TEXTO {3 + i}", "text", 2 + i))
+
+        tracks.append(("PISTA IMAGENES 1", "image", 0))
+        for i in range(self.extra_image_tracks):
+            tracks.append((f"PISTA IMAGENES {2 + i}", "image", 1 + i))
+
+        tracks.append(("PISTA VIDEO PIP 1", "video", 0))
+        for i in range(self.extra_video_tracks):
+            tracks.append((f"PISTA VIDEO PIP {2 + i}", "video", 1 + i))
+
+        return tracks
+
+    def _update_height(self):
+        tracks = self._get_track_layout()
+        h = 35 + len(tracks) * 45
+        self.setFixedHeight(h)
+
+    def add_new_track(self, track_type: str):
+        if track_type == 'text':
+            self.extra_text_tracks += 1
+        elif track_type == 'image':
+            self.extra_image_tracks += 1
+        elif track_type == 'video':
+            self.extra_video_tracks += 1
+        self._update_height()
+        self.update()
 
     def set_duration(self, duration: float):
         if duration <= 0:
@@ -197,7 +237,7 @@ class TimelineCanvas(QWidget):
                 painter.drawRoundedRect(rect, 4, 4)
 
                 y_center = ty + (track_h // 2)
-                painter.setPen(QPen(QColor("rgba(17, 17, 27, 0.4)"), 1.5, Qt.PenStyle.DashLine))
+                painter.setPen(QPen(QColor(17, 17, 27, 100), 1.5, Qt.PenStyle.DashLine))
                 painter.drawLine(int(x1) + 4, y_center, int(x1 + block_w) - 4, y_center)
 
                 if item and getattr(item, 'enable_keyframes', False):
