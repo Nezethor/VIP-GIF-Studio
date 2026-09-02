@@ -418,35 +418,45 @@ class MediaConverterWorker(QThread):
 
         # 1. NVIDIA NVENC
         if selected in ['nvenc', 'auto']:
-            if self._test_encoder(ffmpeg_exe, 'h264_nvenc'):
-                print("⚡ GPU Hardware Encoder Acoplado: NVIDIA NVENC (h264_nvenc)")
-                return ['-c:v', 'h264_nvenc', '-preset', 'p4', '-rc', 'constqp', '-qp', '20']
+            flags = ['-c:v', 'h264_nvenc', '-preset', 'p4']
+            if self._test_encoder(ffmpeg_exe, flags):
+                print("[GPU] Hardware Encoder Acoplado: NVIDIA NVENC (h264_nvenc)")
+                return flags
 
-        # 2. Intel QuickSync QSV
-        if selected in ['qsv', 'auto']:
-            if self._test_encoder(ffmpeg_exe, 'h264_qsv'):
-                print("⚡ GPU Hardware Encoder Acoplado: Intel QuickSync (h264_qsv)")
-                return ['-c:v', 'h264_qsv', '-preset', 'veryfast', '-global_quality', '20']
-
-        # 3. AMD AMF
+        # 2. AMD Radeon AMF GPU
         if selected in ['amf', 'auto']:
-            if self._test_encoder(ffmpeg_exe, 'h264_amf'):
-                print("⚡ GPU Hardware Encoder Acoplado: AMD Radeon AMF (h264_amf)")
-                return ['-c:v', 'h264_amf', '-quality', 'speed', '-qp_p', '20']
+            flags = ['-c:v', 'h264_amf', '-usage', 'transcoding', '-quality', 'speed']
+            if self._test_encoder(ffmpeg_exe, flags):
+                print("[GPU] Hardware Encoder Acoplado: AMD Radeon AMF (h264_amf)")
+                return flags
 
-        # 4. CPU High-Performance Multi-Core Fallback
-        print("💻 CPU Multi-Threading Acoplado: libx264 Ultrafast (-threads 0)")
+        # 3. Intel QuickSync QSV
+        if selected in ['qsv', 'auto']:
+            flags = ['-c:v', 'h264_qsv', '-preset', 'veryfast']
+            if self._test_encoder(ffmpeg_exe, flags):
+                print("[GPU] Hardware Encoder Acoplado: Intel QuickSync (h264_qsv)")
+                return flags
+
+        # 4. Windows Media Foundation Hardware GPU (DirectX HW Acceleration)
+        if selected in ['mf', 'auto']:
+            flags = ['-c:v', 'h264_mf']
+            if self._test_encoder(ffmpeg_exe, flags):
+                print("[GPU] Hardware Encoder Acoplado: Windows Media Foundation GPU (h264_mf)")
+                return flags
+
+        # 5. CPU High-Performance Multi-Core Fallback
+        print("[CPU] Multi-Threading Acoplado: libx264 Ultrafast (-threads 0)")
         return ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'fastdecode', '-crf', '20', '-threads', '0']
 
-    def _test_encoder(self, ffmpeg_exe, encoder_name: str) -> bool:
+    def _test_encoder(self, ffmpeg_exe, encoder_flags: list) -> bool:
         try:
-            cmd = [ffmpeg_exe, '-y', '-f', 'lavfi', '-i', 'nullsrc=s=64x64:d=0.1', '-c:v', encoder_name, '-f', 'null', '-']
+            cmd = [ffmpeg_exe, '-y', '-f', 'lavfi', '-i', 'nullsrc=s=1280x720:d=0.1'] + encoder_flags + ['-f', 'null', '-']
             startupinfo = None
             if os.name == 'nt':
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 startupinfo.wShowWindow = subprocess.SW_HIDE
-            res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, startupinfo=startupinfo, timeout=3)
+            res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, startupinfo=startupinfo, timeout=4)
             return res.returncode == 0
         except Exception:
             return False
