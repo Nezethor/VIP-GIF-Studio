@@ -498,6 +498,10 @@ class MainWindow(QMainWindow):
             timeline_texts=self.timeline.canvas.text_clips,
             image_clips=self.timeline.canvas.image_clips,
             video_clips=self.timeline.canvas.video_clips,
+            shape_clips=self.timeline.canvas.shape_clips,
+            audio_clips=self.timeline.canvas.audio_clips,
+            transition_clips=self.timeline.canvas.transition_clips,
+            adjustment_layers=self.timeline.canvas.adjustment_layers,
             gpu_engine=gpu_engine
         )
         self.worker.progress_changed.connect(self._on_progress)

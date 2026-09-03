@@ -3,12 +3,15 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QDoubleSpinBox, QSpinBox, QLineEdit, QComboBox, QGroupBox,
     QFileDialog, QColorDialog, QMessageBox, QScrollArea, QFrame,
-    QTabWidget, QSlider, QCheckBox
+    QTabWidget, QSlider, QCheckBox, QMenu, QSizePolicy
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QRect, QPoint
-from PyQt6.QtGui import QPainter, QColor, QPen, QFont, QBrush, QMouseEvent, QWheelEvent, QKeyEvent
+from PyQt6.QtGui import QPainter, QColor, QPen, QFont, QBrush, QMouseEvent, QWheelEvent, QKeyEvent, QPixmap, QImage
 
-from app.core.timeline import SpeedInterval, TimelineTextClip, TimelineImageClip, TimelineVideoClip
+from app.core.timeline import (
+    SpeedInterval, TimelineTextClip, TimelineImageClip, TimelineVideoClip,
+    TimelineShapeClip, TimelineAudioClip, TransitionClip, AdjustmentLayer, LayerGroup
+)
 from app.core.photoshop_fx import PhotoshopFX
 
 
@@ -44,20 +47,31 @@ class TimelineCanvas(QWidget):
         self.text_clips = []
         self.image_clips = []
         self.video_clips = []
+        self.shape_clips = []           # NEW: vector shapes
+        self.audio_clips = []           # NEW: independent audio tracks
+        self.transition_clips = []      # NEW: transitions between clips
+        self.adjustment_layers = []     # NEW: global adjustment layers
+        self.layer_groups = []          # NEW: layer groups / smart objects
 
         self.extra_text_tracks = 0
         self.extra_image_tracks = 0
         self.extra_video_tracks = 0
+        self.extra_audio_tracks = 0
 
         self.selected_interval = self.intervals[0]
         self.selected_text_clip = None
         self.selected_image_clip = None
         self.selected_video_clip = None
+        self.selected_shape_clip = None
+        self.selected_audio_clip = None
+        self.selected_adjustment = None
+        self.selected_transition = None
 
         self._is_dragging_playhead = False
         self._is_dragging_block = False
         self._is_dragging_left_handle = False
         self._is_dragging_right_handle = False
+        self._is_slip_mode = False
 
         self._dragged_item = None
         self._drag_start_x = 0
@@ -65,25 +79,50 @@ class TimelineCanvas(QWidget):
         self._drag_orig_end = 0.0
         self._active_snap_x = None
         self._snap_threshold_pixels = 12
+
+        # Waveform pixmap cache: audio_clip.id -> QPixmap
+        self._waveform_cache = {}
+
         self._update_height()
 
     def _get_track_layout(self):
         tracks = [
-            ("PISTA RECORTES", "recortes", 0),
-            ("PISTA VELOCIDAD", "velocidad", 0),
-            ("PISTA TEXTO 1", "text", 0),
-            ("PISTA TEXTO 2", "text", 1),
+            ("✂ RECORTES", "recortes", 0),
+            ("⚡ VELOCIDAD", "velocidad", 0),
+            ("💬 TEXTO 1", "text", 0),
+            ("💬 TEXTO 2", "text", 1),
         ]
         for i in range(self.extra_text_tracks):
-            tracks.append((f"PISTA TEXTO {3 + i}", "text", 2 + i))
+            tracks.append((f"💬 TEXTO {3 + i}", "text", 2 + i))
 
-        tracks.append(("PISTA IMAGENES 1", "image", 0))
+        tracks.append(("🖼 IMAGENES 1", "image", 0))
         for i in range(self.extra_image_tracks):
-            tracks.append((f"PISTA IMAGENES {2 + i}", "image", 1 + i))
+            tracks.append((f"🖼 IMAGENES {2 + i}", "image", 1 + i))
 
-        tracks.append(("PISTA VIDEO PIP 1", "video", 0))
+        tracks.append(("📹 VIDEO PIP 1", "video", 0))
         for i in range(self.extra_video_tracks):
-            tracks.append((f"PISTA VIDEO PIP {2 + i}", "video", 1 + i))
+            tracks.append((f"📹 VIDEO PIP {2 + i}", "video", 1 + i))
+
+        # NEW: Shape tracks
+        if self.shape_clips:
+            shape_indices = sorted(set(getattr(c, 'track_index', 0) for c in self.shape_clips))
+            for si in shape_indices:
+                tracks.append((f"🔷 FORMAS {si + 1}", "shape", si))
+
+        # NEW: Adjustment Layer tracks
+        if self.adjustment_layers:
+            adj_indices = sorted(set(getattr(c, 'track_index', 0) for c in self.adjustment_layers))
+            for ai in adj_indices:
+                tracks.append((f"🎛 AJUSTE {ai + 1}", "adjustment", ai))
+
+        # NEW: Transition tracks
+        if self.transition_clips:
+            tracks.append(("🎞 TRANSICIONES", "transition", 0))
+
+        # NEW: Audio tracks
+        tracks.append(("🎵 AUDIO 1", "audio", 0))
+        for i in range(self.extra_audio_tracks):
+            tracks.append((f"🎵 AUDIO {2 + i}", "audio", 1 + i))
 
         return tracks
 
@@ -99,6 +138,8 @@ class TimelineCanvas(QWidget):
             self.extra_image_tracks += 1
         elif track_type == 'video':
             self.extra_video_tracks += 1
+        elif track_type == 'audio':
+            self.extra_audio_tracks += 1
         self._update_height()
         self.update()
 
@@ -116,26 +157,26 @@ class TimelineCanvas(QWidget):
         self.update()
 
     def delete_selected_item(self):
-        """Deletes currently selected text, image, or video clip."""
-        if self.selected_text_clip and self.selected_text_clip in self.text_clips:
-            self.text_clips.remove(self.selected_text_clip)
-            self.selected_text_clip = None
-            self.timeline_changed.emit()
-            self.item_deleted.emit()
-            self.update()
-        elif self.selected_image_clip and self.selected_image_clip in self.image_clips:
-            self.image_clips.remove(self.selected_image_clip)
-            self.selected_image_clip = None
-            self.timeline_changed.emit()
-            self.item_deleted.emit()
-            self.update()
-        elif self.selected_video_clip and self.selected_video_clip in self.video_clips:
-            self.video_clips.remove(self.selected_video_clip)
-            self.selected_video_clip = None
-            self.timeline_changed.emit()
-            self.item_deleted.emit()
-            self.update()
-        elif self.selected_interval and len(self.intervals) > 1:
+        """Deletes currently selected text, image, video, shape, audio, adjustment, or transition clip."""
+        def _del(lst, sel_attr):
+            item = getattr(self, sel_attr, None)
+            if item and item in lst:
+                lst.remove(item)
+                setattr(self, sel_attr, None)
+                self.timeline_changed.emit()
+                self.item_deleted.emit()
+                self.update()
+                return True
+            return False
+
+        if _del(self.text_clips, 'selected_text_clip'): return
+        if _del(self.image_clips, 'selected_image_clip'): return
+        if _del(self.video_clips, 'selected_video_clip'): return
+        if _del(self.shape_clips, 'selected_shape_clip'): return
+        if _del(self.audio_clips, 'selected_audio_clip'): return
+        if _del(self.adjustment_layers, 'selected_adjustment'): return
+        if _del(self.transition_clips, 'selected_transition'): return
+        if self.selected_interval and len(self.intervals) > 1:
             self.intervals.remove(self.selected_interval)
             self.selected_interval = self.intervals[0]
             self.timeline_changed.emit()
@@ -238,7 +279,7 @@ class TimelineCanvas(QWidget):
 
 
     def split_interval_at_current_sec(self):
-        """Splits the speed interval or secondary video clip at current_sec."""
+        """Splits the speed interval, video clip, image clip, or shape clip at current_sec."""
         for idx, item in enumerate(self.intervals):
             if item.start_sec < self.current_sec < item.end_sec - 0.2:
                 left = SpeedInterval(item.start_sec, self.current_sec, item.speed, item.reverse)
@@ -257,6 +298,23 @@ class TimelineCanvas(QWidget):
                 self.video_clips[idx] = left
                 self.video_clips.insert(idx + 1, right)
                 self.selected_video_clip = right
+                self.timeline_changed.emit()
+                self.update()
+                return
+
+        for idx, shp in enumerate(self.shape_clips):
+            if shp.start_sec < self.current_sec < shp.end_sec - 0.2:
+                left = TimelineShapeClip(shp.shape_type, shp.start_sec, self.current_sec,
+                                         shp.x_ratio, shp.y_ratio, shp.width_ratio, shp.height_ratio,
+                                         shp.fill_color, shp.stroke_color, shp.stroke_width,
+                                         shp.track_index, shp.layer_z)
+                right = TimelineShapeClip(shp.shape_type, self.current_sec, shp.end_sec,
+                                          shp.x_ratio, shp.y_ratio, shp.width_ratio, shp.height_ratio,
+                                          shp.fill_color, shp.stroke_color, shp.stroke_width,
+                                          shp.track_index, shp.layer_z)
+                self.shape_clips[idx] = left
+                self.shape_clips.insert(idx + 1, right)
+                self.selected_shape_clip = right
                 self.timeline_changed.emit()
                 self.update()
                 return
@@ -393,6 +451,68 @@ class TimelineCanvas(QWidget):
                         bname = os.path.basename(v_clip.video_path)[:10] if v_clip.video_path else "Video PIP"
                         draw_clip_block(x1, x2, ty, QColor("#F9E2AF"), v_clip == self.selected_video_clip, f"📹 {bname}", v_clip)
 
+            # --- NEW CLIP TYPES ---
+            elif t_type == "shape":
+                for shp in self.shape_clips:
+                    if getattr(shp, 'track_index', 0) == t_subidx:
+                        x1 = max(115, self._sec_to_x(shp.start_sec))
+                        x2 = min(w, self._sec_to_x(shp.end_sec))
+                        # Use fill color as block color
+                        try:
+                            shp_col = QColor(getattr(shp, 'fill_color', '#CBA6F7'))
+                        except Exception:
+                            shp_col = QColor("#CBA6F7")
+                        draw_clip_block(x1, x2, ty, shp_col, shp == self.selected_shape_clip,
+                                        f"🔷 {getattr(shp, 'shape_type', 'Shape')[:8]}", shp)
+
+            elif t_type == "adjustment":
+                for adj in self.adjustment_layers:
+                    if getattr(adj, 'track_index', 0) == t_subidx:
+                        x1 = max(115, self._sec_to_x(adj.start_sec))
+                        x2 = min(w, self._sec_to_x(adj.end_sec))
+                        draw_clip_block(x1, x2, ty, QColor("#94E2D5"), adj == self.selected_adjustment,
+                                        f"🎛 {getattr(adj, 'adjustment_type', 'Ajuste')[:12]}")
+
+            elif t_type == "transition":
+                for trans in self.transition_clips:
+                    tx1 = max(115, self._sec_to_x(trans.start_sec))
+                    tx2 = min(w, self._sec_to_x(trans.end_sec))
+                    draw_clip_block(tx1, tx2, ty, QColor("#F2CDCD"), trans == self.selected_transition,
+                                    f"🎞 {getattr(trans, 'transition_type', 'Trans')[:8]}")
+
+            elif t_type == "audio":
+                for ac in self.audio_clips:
+                    if getattr(ac, 'track_index', 0) == t_subidx:
+                        ax1 = max(115, self._sec_to_x(ac.start_sec))
+                        ax2 = min(w, self._sec_to_x(ac.end_sec))
+                        muted = getattr(ac, 'muted', False)
+                        a_col = QColor("#45475A") if muted else QColor("#B4BEFE")
+                        bname = os.path.basename(getattr(ac, 'audio_path', 'Audio'))[:12]
+                        # Draw block base
+                        if ax2 > 115 and ax1 < w:
+                            block_w = max(6, ax2 - ax1)
+                            is_sel = ac == self.selected_audio_clip
+                            pen = QPen(QColor("#FFFFFF"), 2) if is_sel else QPen(QColor("#11111B"), 1)
+                            painter.setPen(pen)
+                            painter.setBrush(QBrush(a_col))
+                            rect = QRect(int(ax1), ty + 2, int(block_w), 34)
+                            painter.drawRoundedRect(rect, 4, 4)
+
+                            # Draw waveform if cached
+                            cache_key = ac.id
+                            if cache_key in self._waveform_cache:
+                                wf_pix = self._waveform_cache[cache_key]
+                                painter.drawPixmap(int(ax1) + 2, ty + 3,
+                                                   min(int(block_w) - 4, wf_pix.width()), 30, wf_pix)
+                            else:
+                                # Request async waveform render
+                                self._request_waveform(ac)
+
+                            painter.setPen(QColor("#11111B"))
+                            painter.setFont(QFont("Segoe UI", 7, QFont.Weight.Bold))
+                            mute_tag = " 🔇" if muted else ""
+                            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, f"🎵 {bname}{mute_tag}")
+
         px = self._sec_to_x(self.current_sec)
         if 115 <= px <= w:
             painter.setPen(QPen(QColor("#F5E0DC"), 2))
@@ -453,13 +573,22 @@ class TimelineCanvas(QWidget):
             track_idx = int((y - 32) // 43)
             if 0 <= track_idx < len(tracks):
                 t_name, t_type, t_subidx = tracks[track_idx]
+
+                def _deselect_all():
+                    self.selected_interval = None
+                    self.selected_text_clip = None
+                    self.selected_image_clip = None
+                    self.selected_video_clip = None
+                    self.selected_shape_clip = None
+                    self.selected_audio_clip = None
+                    self.selected_adjustment = None
+                    self.selected_transition = None
+
                 if t_type in ("recortes", "velocidad"):
                     for item in self.intervals:
                         if check_handle_or_body(item):
+                            _deselect_all()
                             self.selected_interval = item
-                            self.selected_text_clip = None
-                            self.selected_image_clip = None
-                            self.selected_video_clip = None
                             self.interval_selected.emit(item)
                             self.update()
                             return
@@ -467,10 +596,8 @@ class TimelineCanvas(QWidget):
                     for t_clip in self.text_clips:
                         if getattr(t_clip, 'track_index', 0) == t_subidx:
                             if check_handle_or_body(t_clip):
+                                _deselect_all()
                                 self.selected_text_clip = t_clip
-                                self.selected_interval = None
-                                self.selected_image_clip = None
-                                self.selected_video_clip = None
                                 self.text_clip_selected.emit(t_clip)
                                 self.update()
                                 return
@@ -478,10 +605,8 @@ class TimelineCanvas(QWidget):
                     for img_clip in self.image_clips:
                         if getattr(img_clip, 'track_index', 0) == t_subidx:
                             if check_handle_or_body(img_clip):
+                                _deselect_all()
                                 self.selected_image_clip = img_clip
-                                self.selected_interval = None
-                                self.selected_text_clip = None
-                                self.selected_video_clip = None
                                 self.image_clip_selected.emit(img_clip)
                                 self.update()
                                 return
@@ -489,13 +614,50 @@ class TimelineCanvas(QWidget):
                     for v_clip in self.video_clips:
                         if getattr(v_clip, 'track_index', 0) == t_subidx:
                             if check_handle_or_body(v_clip):
+                                _deselect_all()
                                 self.selected_video_clip = v_clip
-                                self.selected_interval = None
-                                self.selected_text_clip = None
-                                self.selected_image_clip = None
                                 self.video_clip_selected.emit(v_clip)
                                 self.update()
                                 return
+                elif t_type == "shape":
+                    for shp in self.shape_clips:
+                        if getattr(shp, 'track_index', 0) == t_subidx:
+                            if check_handle_or_body(shp):
+                                _deselect_all()
+                                self.selected_shape_clip = shp
+                                self.timeline_changed.emit()
+                                self.update()
+                                return
+                elif t_type == "audio":
+                    for ac in self.audio_clips:
+                        if getattr(ac, 'track_index', 0) == t_subidx:
+                            x1 = self._sec_to_x(ac.start_sec)
+                            x2 = self._sec_to_x(ac.end_sec)
+                            if x1 <= x <= x2:
+                                _deselect_all()
+                                self.selected_audio_clip = ac
+                                self.timeline_changed.emit()
+                                self.update()
+                                return
+                elif t_type == "adjustment":
+                    for adj in self.adjustment_layers:
+                        if getattr(adj, 'track_index', 0) == t_subidx:
+                            if check_handle_or_body(adj):
+                                _deselect_all()
+                                self.selected_adjustment = adj
+                                self.timeline_changed.emit()
+                                self.update()
+                                return
+                elif t_type == "transition":
+                    for trans in self.transition_clips:
+                        x1 = self._sec_to_x(trans.start_sec)
+                        x2 = self._sec_to_x(trans.end_sec)
+                        if x1 <= x <= x2:
+                            _deselect_all()
+                            self.selected_transition = trans
+                            self.timeline_changed.emit()
+                            self.update()
+                            return
 
     def mouseMoveEvent(self, event: QMouseEvent):
         x = event.position().x()
@@ -524,6 +686,12 @@ class TimelineCanvas(QWidget):
             for vc in self.video_clips:
                 if vc != self._dragged_item:
                     snap_candidates.extend([vc.start_sec, vc.end_sec])
+            for sc in self.shape_clips:
+                if sc != self._dragged_item:
+                    snap_candidates.extend([sc.start_sec, sc.end_sec])
+            for ac in self.audio_clips:
+                if ac != self._dragged_item:
+                    snap_candidates.extend([ac.start_sec, ac.end_sec])
 
             def check_snap(target_val):
                 best_dist = threshold_sec
@@ -594,10 +762,38 @@ class TimelineCanvas(QWidget):
         self._active_snap_x = None
         self.update()
 
+    def _request_waveform(self, audio_clip):
+        """Requests an async waveform render for the given audio clip, storing result in cache."""
+        cache_key = audio_clip.id
+        if cache_key in self._waveform_cache:
+            return
+        # Mark as pending to avoid multiple requests
+        self._waveform_cache[cache_key] = None
+        try:
+            from app.core.audio_engine import WaveformRenderer
+            renderer = WaveformRenderer(width=200, height=30, wave_color="#89B4FA", bg_color="#181825")
+            def _on_done(img):
+                try:
+                    from PIL.ImageQt import ImageQt
+                    qt_img = ImageQt(img.convert("RGBA"))
+                    pix = QPixmap.fromImage(QImage(qt_img))
+                    self._waveform_cache[cache_key] = pix
+                    self.update()
+                except Exception:
+                    pass
+            renderer.render_async(
+                audio_clip.audio_path,
+                start_sec=getattr(audio_clip, 'source_trim_start', 0.0),
+                duration=audio_clip.duration,
+                callback=_on_done)
+        except Exception:
+            pass
+
 
 class TimelineWidget(QWidget):
     """
     Multi-Track Timeline Editor with Edge Trimming Handles, Delete Key & Full Inspector.
+    Supports: Clip Trim, Split, Slip, Speed, Keyframes, Transitions, Groups, Audio, Shapes, Adjustment Layers.
     """
     playhead_moved = pyqtSignal(float)
     timeline_updated = pyqtSignal()
@@ -614,7 +810,7 @@ class TimelineWidget(QWidget):
 
         # Toolbar
         toolbar = QHBoxLayout()
-        lbl_title = QLabel("🎬 Línea de Tiempo Multipista (Bordes Arrastrables & Tecla Supr)", self)
+        lbl_title = QLabel("🎬 Línea de Tiempo Multipista — VIP GIF Studio v3.0", self)
         lbl_title.setStyleSheet("font-weight: bold; color: #89B4FA; font-size: 13px;")
         toolbar.addWidget(lbl_title)
         toolbar.addStretch()
@@ -629,7 +825,7 @@ class TimelineWidget(QWidget):
         self.btn_add_text.clicked.connect(self._on_add_text_clicked)
         toolbar.addWidget(self.btn_add_text)
 
-        self.btn_add_image = QPushButton("🖼 + Imagen / Marca", self)
+        self.btn_add_image = QPushButton("🖼 + Imagen", self)
         self.btn_add_image.setStyleSheet("background-color: #89DCEB; color: #11111B; font-weight: bold;")
         self.btn_add_image.clicked.connect(self._on_add_image_clicked)
         toolbar.addWidget(self.btn_add_image)
@@ -639,7 +835,31 @@ class TimelineWidget(QWidget):
         self.btn_add_video.clicked.connect(self._on_add_video_clicked)
         toolbar.addWidget(self.btn_add_video)
 
-        self.btn_add_track = QPushButton("➕ Agregar Nueva Pista", self)
+        # NEW: Shape button
+        self.btn_add_shape = QPushButton("🔷 + Forma", self)
+        self.btn_add_shape.setStyleSheet("background-color: #CBA6F7; color: #11111B; font-weight: bold;")
+        self.btn_add_shape.clicked.connect(self._on_add_shape_clicked)
+        toolbar.addWidget(self.btn_add_shape)
+
+        # NEW: Audio Track button
+        self.btn_add_audio = QPushButton("🎵 + Audio", self)
+        self.btn_add_audio.setStyleSheet("background-color: #B4BEFE; color: #11111B; font-weight: bold;")
+        self.btn_add_audio.clicked.connect(self._on_add_audio_clicked)
+        toolbar.addWidget(self.btn_add_audio)
+
+        # NEW: Transition button
+        self.btn_add_transition = QPushButton("🎞 Transición", self)
+        self.btn_add_transition.setStyleSheet("background-color: #F2CDCD; color: #11111B; font-weight: bold;")
+        self.btn_add_transition.clicked.connect(self._on_add_transition_clicked)
+        toolbar.addWidget(self.btn_add_transition)
+
+        # NEW: Adjustment Layer button
+        self.btn_add_adj = QPushButton("🎛 Ajuste", self)
+        self.btn_add_adj.setStyleSheet("background-color: #94E2D5; color: #11111B; font-weight: bold;")
+        self.btn_add_adj.clicked.connect(self._on_add_adjustment_clicked)
+        toolbar.addWidget(self.btn_add_adj)
+
+        self.btn_add_track = QPushButton("➕ Nueva Pista", self)
         self.btn_add_track.setStyleSheet("background-color: #CBA6F7; color: #11111B; font-weight: bold;")
         self.btn_add_track.clicked.connect(self._on_add_track_menu)
         toolbar.addWidget(self.btn_add_track)
@@ -649,7 +869,7 @@ class TimelineWidget(QWidget):
         self.btn_duplicate.clicked.connect(self._on_duplicate_clicked)
         toolbar.addWidget(self.btn_duplicate)
 
-        self.btn_delete = QPushButton("🗑 Eliminar Seleccionado (Supr)", self)
+        self.btn_delete = QPushButton("🗑 Eliminar (Supr)", self)
         self.btn_delete.setStyleSheet("background-color: #45475A; color: #F38BA8; font-weight: bold;")
         self.btn_delete.clicked.connect(self._on_delete_clicked)
         toolbar.addWidget(self.btn_delete)
@@ -882,6 +1102,80 @@ class TimelineWidget(QWidget):
                 self.canvas.update()
                 self.timeline_updated.emit()
                 self._on_video_clip_selected(v_clip)
+
+    def _on_add_shape_clicked(self):
+        """Opens shape type menu and adds a new TimelineShapeClip to the timeline."""
+        menu = QMenu(self)
+        menu.setStyleSheet("QMenu { background-color: #313244; color: #CDD6F4; border: 1px solid #45475A; font-weight: bold; } QMenu::item:selected { background-color: #CBA6F7; color: #11111B; }")
+        for shape_name in TimelineShapeClip.SHAPES:
+            menu.addAction(f"🔷 {shape_name}")
+        chosen = menu.exec(self.btn_add_shape.mapToGlobal(QPoint(0, self.btn_add_shape.height())))
+        if chosen:
+            shape_type = chosen.text().replace("🔷 ", "")
+            start = self.canvas.current_sec
+            end = min(self.canvas.duration, start + 3.0)
+            shp = TimelineShapeClip(shape_type=shape_type, start_sec=start, end_sec=end, track_index=0)
+            self.canvas.shape_clips.append(shp)
+            self.canvas.selected_shape_clip = shp
+            self.canvas._update_height()
+            self.canvas.update()
+            self.timeline_updated.emit()
+            self.lbl_insp_info.setText(f"🔷 Forma '{shape_type}' añadida [{start:.1f}s - {end:.1f}s]")
+
+    def _on_add_audio_clicked(self):
+        """Opens file dialog to select audio and adds TimelineAudioClip to the timeline."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Seleccionar Archivo de Audio", "",
+            "Audio (*.mp3 *.wav *.ogg *.flac *.aac *.m4a *.opus)")
+        if file_path:
+            start = self.canvas.current_sec
+            end = min(self.canvas.duration, start + 10.0)
+            track_idx = self.canvas.extra_audio_tracks
+            ac = TimelineAudioClip(audio_path=file_path, start_sec=start, end_sec=end, track_index=track_idx)
+            self.canvas.audio_clips.append(ac)
+            self.canvas.selected_audio_clip = ac
+            self.canvas._update_height()
+            self.canvas.update()
+            self.timeline_updated.emit()
+            import os
+            self.lbl_insp_info.setText(f"🎵 Audio '{os.path.basename(file_path)}' añadido [{start:.1f}s - {end:.1f}s]")
+
+    def _on_add_transition_clicked(self):
+        """Opens transition type menu and adds a TransitionClip at the current playhead."""
+        menu = QMenu(self)
+        menu.setStyleSheet("QMenu { background-color: #313244; color: #CDD6F4; border: 1px solid #45475A; font-weight: bold; } QMenu::item:selected { background-color: #F2CDCD; color: #11111B; }")
+        for t_name in TransitionClip.TYPES:
+            menu.addAction(f"🎞 {t_name}")
+        chosen = menu.exec(self.btn_add_transition.mapToGlobal(QPoint(0, self.btn_add_transition.height())))
+        if chosen:
+            t_type = chosen.text().replace("🎞 ", "")
+            at_sec = self.canvas.current_sec
+            trans = TransitionClip(transition_type=t_type, at_sec=at_sec, duration=0.5)
+            self.canvas.transition_clips.append(trans)
+            self.canvas.selected_transition = trans
+            self.canvas._update_height()
+            self.canvas.update()
+            self.timeline_updated.emit()
+            self.lbl_insp_info.setText(f"🎞 Transición '{t_type}' en {at_sec:.2f}s (0.5s duración)")
+
+    def _on_add_adjustment_clicked(self):
+        """Opens adjustment type menu and adds an AdjustmentLayer to the timeline."""
+        menu = QMenu(self)
+        menu.setStyleSheet("QMenu { background-color: #313244; color: #CDD6F4; border: 1px solid #45475A; font-weight: bold; } QMenu::item:selected { background-color: #94E2D5; color: #11111B; }")
+        for a_name in AdjustmentLayer.ADJUSTMENT_TYPES:
+            menu.addAction(f"🎛 {a_name}")
+        chosen = menu.exec(self.btn_add_adj.mapToGlobal(QPoint(0, self.btn_add_adj.height())))
+        if chosen:
+            a_type = chosen.text().replace("🎛 ", "")
+            start = self.canvas.current_sec
+            end = min(self.canvas.duration, start + 5.0)
+            adj = AdjustmentLayer(adjustment_type=a_type, start_sec=start, end_sec=end, track_index=0)
+            self.canvas.adjustment_layers.append(adj)
+            self.canvas.selected_adjustment = adj
+            self.canvas._update_height()
+            self.canvas.update()
+            self.timeline_updated.emit()
+            self.lbl_insp_info.setText(f"🎛 Capa de Ajuste '{a_type}' [{start:.1f}s - {end:.1f}s]")
 
     def _on_interval_selected(self, interval: SpeedInterval):
         self.txt_clip_content.setVisible(False)

@@ -6,6 +6,7 @@ import cv2
 import os
 import numpy as np
 from app.core.photoshop_fx import PhotoshopFX
+from app.core.frame_cache import get_global_cache, GPUCompositor
 
 from app.core.video_info import VideoInfo
 from app.gui.range_slider import DualRangeSlider
@@ -366,6 +367,55 @@ class VideoPreviewWidget(QWidget):
                             frame_rgb = np.array(bg_temp.convert("RGB"))
                     except Exception:
                         pass
+
+        # Shape Clips preview (NEW v3.0)
+        active_shapes = [s for s in getattr(self, 'shape_clips', []) if s.is_visible_at(self.current_sec)]
+        if active_shapes:
+            pil_shapes = Image.fromarray(frame_rgb).convert("RGBA")
+            for shp in active_shapes:
+                try:
+                    cur_x, cur_y, cur_w, cur_h, _ = shp.get_transform_at(self.current_sec) if hasattr(shp, 'get_transform_at') else (shp.x_ratio, shp.y_ratio, shp.width_ratio, shp.height_ratio, 40)
+                    h, w = frame_rgb.shape[:2]
+                    target_w = max(10, int(w * cur_w))
+                    target_h = max(10, int(h * cur_h))
+                    shape_img = PhotoshopFX.render_shape(
+                        target_w, target_h,
+                        shape_type=getattr(shp, 'shape_type', 'Rectangle'),
+                        fill_color=getattr(shp, 'fill_color', '#CBA6F7'),
+                        stroke_color=getattr(shp, 'stroke_color', '#FFFFFF'),
+                        stroke_width=getattr(shp, 'stroke_width', 2),
+                        corner_radius=getattr(shp, 'corner_radius', 0),
+                        star_points=getattr(shp, 'star_points', 5))
+                    # Apply mask
+                    if getattr(shp, 'mask_path', ''):
+                        shape_img = PhotoshopFX.apply_mask(shape_img, shp.mask_path, getattr(shp, 'mask_invert', False))
+                    cur_rot = shp.get_rotation_at(self.current_sec) if hasattr(shp, 'get_rotation_at') else getattr(shp, 'rotation', 0.0)
+                    if abs(cur_rot) > 0.1:
+                        shape_img = PhotoshopFX.apply_rotation(shape_img, cur_rot)
+                    shp_op = PhotoshopFX.compute_opacity_with_fade(
+                        self.current_sec, shp.start_sec, shp.end_sec,
+                        base_opacity=shp.get_opacity_at(self.current_sec) if hasattr(shp, 'get_opacity_at') else getattr(shp, 'opacity', 1.0),
+                        fade_in_sec=getattr(shp, 'fade_in_sec', 0.0),
+                        fade_out_sec=getattr(shp, 'fade_out_sec', 0.0))
+                    pos_x = int((w - target_w) * cur_x)
+                    pos_y = int((h - target_h) * cur_y)
+                    pil_shapes = PhotoshopFX.apply_blend_composite(
+                        pil_shapes, shape_img, (pos_x, pos_y),
+                        blend_mode=getattr(shp, 'blend_mode', 'Normal'), opacity=shp_op)
+                except Exception:
+                    pass
+            frame_rgb = np.array(pil_shapes.convert("RGB"))
+
+        # Adjustment Layers preview (NEW v3.0)
+        active_adj = [a for a in getattr(self, 'adjustment_layers', []) if a.is_active_at(self.current_sec)]
+        if active_adj:
+            adj_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
+            for adj in active_adj:
+                try:
+                    adj_bgr = PhotoshopFX.apply_adjustment_layer(adj_bgr, adj)
+                except Exception:
+                    pass
+            frame_rgb = cv2.cvtColor(adj_bgr, cv2.COLOR_BGR2RGB)
 
         # Check if PIL overlay rendering (images, texts, selected bounding box) is needed
         active_imgs = [img for img in getattr(self, 'image_clips', []) if img.is_visible_at(self.current_sec)]
