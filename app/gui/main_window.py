@@ -106,6 +106,9 @@ class MainWindow(QMainWindow):
         self.timeline.playhead_moved.connect(self.video_player.seek_to)
         self.timeline.timeline_updated.connect(self._on_timeline_updated)
         self.timeline.clip_selected.connect(self._on_clip_selected)
+        self.video_player.item_selected.connect(self._on_preview_item_selected)
+        self.video_player.item_modified.connect(self._on_preview_item_modified)
+        self.video_player.main_win = self
 
         splitter.addWidget(left_container)
 
@@ -344,20 +347,36 @@ class MainWindow(QMainWindow):
         self.video_player.selected_item = item
         if self.video_player.cap and not self.video_player.timer.isActive():
             self.video_player.seek_to(self.video_player.current_sec)
+        self.video_player.video_label.update()
+
+    def _on_preview_item_selected(self, item):
+        self.timeline.select_clip(item)
+
+    def _on_preview_item_modified(self, item):
+        self.timeline.sync_inspector(item)
 
     def _on_timeline_updated(self):
         combined = list(self.subtitles) + list(self.timeline.canvas.text_clips)
         self.video_player.set_subtitles(combined)
         self.video_player.image_clips = list(self.timeline.canvas.image_clips)
         self.video_player.video_clips = list(self.timeline.canvas.video_clips)
+        self.video_player.shape_clips = list(self.timeline.canvas.shape_clips)
+        self.video_player.audio_clips = list(self.timeline.canvas.audio_clips)
+        self.video_player.adjustment_layers = list(self.timeline.canvas.adjustment_layers)
+        self.video_player.transition_clips = list(self.timeline.canvas.transition_clips)
         self.video_player.speed_intervals = list(self.timeline.canvas.intervals)
         self.video_player.selected_item = (
             self.timeline.canvas.selected_text_clip or 
             self.timeline.canvas.selected_image_clip or 
-            self.timeline.canvas.selected_video_clip
+            self.timeline.canvas.selected_video_clip or
+            self.timeline.canvas.selected_shape_clip or
+            self.timeline.canvas.selected_adjustment or
+            self.timeline.canvas.selected_transition or
+            self.timeline.canvas.selected_audio_clip
         )
         if self.video_player.cap and not self.video_player.timer.isActive():
             self.video_player.seek_to(self.video_player.current_sec)
+        self.video_player.video_label.update()
 
     def _load_video_file(self, file_path: str):
         if not os.path.exists(file_path):

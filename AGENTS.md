@@ -1,4 +1,4 @@
-﻿# VIP GIF Studio — Reglas Prioritarias del Agente
+# VIP GIF Studio — Reglas Prioritarias del Agente
 
 ## REGLA 0 — LEER SIEMPRE ESTE ARCHIVO PRIMERO
 Lee este archivo al inicio de CADA intervencion (nueva funcion, arreglo, mejora, release).
@@ -38,7 +38,7 @@ Para cada arreglo o nueva funcion sigue siempre este orden:
 - Incrementar Z en X.Y.Z para cada fix pequeno
 - Incrementar Y en X.Y.Z para nuevas funciones
 - Incrementar X para refactors grandes o cambios de arquitectura
-- Version actual: v2.8.0
+- Version actual: v3.1.0
 
 ---
 

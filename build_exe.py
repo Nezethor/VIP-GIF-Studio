@@ -5,7 +5,7 @@ import imageio_ffmpeg
 
 def build():
     print("==================================================")
-    print("   Compilando VIP GIF Studio v3.0.0 a .EXE ...")
+    print("   Compilando VIP GIF Studio v3.1.0 a .EXE ...")
     print("==================================================")
 
     ffmpeg_bin_dir = os.path.dirname(imageio_ffmpeg.get_ffmpeg_exe())
@@ -21,7 +21,7 @@ def build():
         "--noconsole",
         "--onefile",
         "--icon", icon_param,
-        "--name", "VIP_GIF_Studio_v3.0.0",
+        "--name", "VIP_GIF_Studio_v3.1.0",
         "--add-data", add_data_param,
         "--add-data", add_assets,
         "--hidden-import", "PyQt6",
@@ -41,7 +41,7 @@ def build():
     if res.returncode == 0:
         print("\n==================================================")
         print(" ¡Compilación completada con éxito!")
-        print(" Ejecutable generado en: dist/VIP_GIF_Studio_v3.0.0.exe")
+        print(" Ejecutable generado en: dist/VIP_GIF_Studio_v3.1.0.exe")
         print("==================================================")
     else:
         print("\n❌ Error durante la compilación con PyInstaller.")

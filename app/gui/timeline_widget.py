@@ -28,6 +28,10 @@ class TimelineCanvas(QWidget):
     text_clip_selected = pyqtSignal(object)
     image_clip_selected = pyqtSignal(object)
     video_clip_selected = pyqtSignal(object)
+    shape_clip_selected = pyqtSignal(object)
+    adjustment_selected = pyqtSignal(object)
+    transition_selected = pyqtSignal(object)
+    audio_clip_selected = pyqtSignal(object)
     timeline_changed = pyqtSignal()
     item_deleted = pyqtSignal()
 
@@ -625,6 +629,7 @@ class TimelineCanvas(QWidget):
                             if check_handle_or_body(shp):
                                 _deselect_all()
                                 self.selected_shape_clip = shp
+                                self.shape_clip_selected.emit(shp)
                                 self.timeline_changed.emit()
                                 self.update()
                                 return
@@ -636,6 +641,7 @@ class TimelineCanvas(QWidget):
                             if x1 <= x <= x2:
                                 _deselect_all()
                                 self.selected_audio_clip = ac
+                                self.audio_clip_selected.emit(ac)
                                 self.timeline_changed.emit()
                                 self.update()
                                 return
@@ -645,6 +651,7 @@ class TimelineCanvas(QWidget):
                             if check_handle_or_body(adj):
                                 _deselect_all()
                                 self.selected_adjustment = adj
+                                self.adjustment_selected.emit(adj)
                                 self.timeline_changed.emit()
                                 self.update()
                                 return
@@ -655,6 +662,7 @@ class TimelineCanvas(QWidget):
                         if x1 <= x <= x2:
                             _deselect_all()
                             self.selected_transition = trans
+                            self.transition_selected.emit(trans)
                             self.timeline_changed.emit()
                             self.update()
                             return
@@ -883,6 +891,10 @@ class TimelineWidget(QWidget):
         self.canvas.text_clip_selected.connect(self._on_text_clip_selected)
         self.canvas.image_clip_selected.connect(self._on_image_clip_selected)
         self.canvas.video_clip_selected.connect(self._on_video_clip_selected)
+        self.canvas.shape_clip_selected.connect(self._on_shape_clip_selected)
+        self.canvas.adjustment_selected.connect(self._on_adjustment_selected)
+        self.canvas.transition_selected.connect(self._on_transition_selected)
+        self.canvas.audio_clip_selected.connect(self._on_audio_clip_selected)
         self.canvas.timeline_changed.connect(self.timeline_updated.emit)
 
         self.canvas_scroll = QScrollArea(self)
@@ -986,6 +998,12 @@ class TimelineWidget(QWidget):
         self.btn_add_kf_node.clicked.connect(self._on_add_kf_node)
         self.btn_add_kf_node.setVisible(False)
         self.insp_layout.addWidget(self.btn_add_kf_node)
+
+        self.btn_open_inspector = QPushButton("⚙ Inspector FX Completo", self.inspector_group)
+        self.btn_open_inspector.setStyleSheet("background-color: #89B4FA; color: #11111B; font-weight: bold;")
+        self.btn_open_inspector.setToolTip("Abre el diálogo completo de propiedades, transformaciones, modos de fusión y filtros FX")
+        self.btn_open_inspector.clicked.connect(self._on_open_inspector_clicked)
+        self.insp_layout.addWidget(self.btn_open_inspector)
 
         layout.addWidget(self.inspector_group)
 
@@ -1394,6 +1412,196 @@ class TimelineWidget(QWidget):
             self.canvas.selected_video_clip.end_sec = max(self.spn_start_sec.value() + 0.1, self.spn_end_sec.value())
             self.canvas.update()
             self.timeline_updated.emit()
+        elif self.canvas.selected_shape_clip:
+            self.canvas.selected_shape_clip.start_sec = self.spn_start_sec.value()
+            self.canvas.selected_shape_clip.end_sec = max(self.spn_start_sec.value() + 0.1, self.spn_end_sec.value())
+            self.canvas.update()
+            self.timeline_updated.emit()
+
+    def _on_shape_clip_selected(self, shp: TimelineShapeClip):
+        self.canvas.selected_shape_clip = shp
+        self.canvas.selected_text_clip = None
+        self.canvas.selected_image_clip = None
+        self.canvas.selected_video_clip = None
+        self.canvas.selected_adjustment = None
+        self.canvas.selected_transition = None
+        self.clip_selected.emit(shp)
+
+        self.txt_clip_content.setVisible(False)
+        self.spn_font_size.setVisible(False)
+        self.spn_block_speed.setVisible(False)
+        self.spn_start_sec.setVisible(True)
+        self.spn_end_sec.setVisible(True)
+        self.btn_kf_start.setVisible(True)
+        self.btn_kf_end.setVisible(True)
+        self.btn_add_kf_node.setVisible(True)
+
+        if shp:
+            self.spn_start_sec.blockSignals(True)
+            self.spn_start_sec.setValue(shp.start_sec)
+            self.spn_start_sec.blockSignals(False)
+
+            self.spn_end_sec.blockSignals(True)
+            self.spn_end_sec.setValue(shp.end_sec)
+            self.spn_end_sec.blockSignals(False)
+
+            self.lbl_insp_info.setText(f"🔷 Forma: {getattr(shp, 'shape_type', 'Shape')} [{shp.start_sec:.1f}s - {shp.end_sec:.1f}s]")
+
+    def _on_adjustment_selected(self, adj: AdjustmentLayer):
+        self.canvas.selected_adjustment = adj
+        self.canvas.selected_text_clip = None
+        self.canvas.selected_image_clip = None
+        self.canvas.selected_video_clip = None
+        self.canvas.selected_shape_clip = None
+        self.canvas.selected_transition = None
+        self.clip_selected.emit(adj)
+
+        self.txt_clip_content.setVisible(False)
+        self.spn_font_size.setVisible(False)
+        self.spn_block_speed.setVisible(False)
+        self.spn_start_sec.setVisible(True)
+        self.spn_end_sec.setVisible(True)
+        self.btn_kf_start.setVisible(False)
+        self.btn_kf_end.setVisible(False)
+        self.btn_add_kf_node.setVisible(False)
+
+        if adj:
+            self.spn_start_sec.blockSignals(True)
+            self.spn_start_sec.setValue(adj.start_sec)
+            self.spn_start_sec.blockSignals(False)
+
+            self.spn_end_sec.blockSignals(True)
+            self.spn_end_sec.setValue(adj.end_sec)
+            self.spn_end_sec.blockSignals(False)
+
+            self.lbl_insp_info.setText(f"🎛 Capa de Ajuste: {getattr(adj, 'adjustment_type', 'Ajuste')} [{adj.start_sec:.1f}s - {adj.end_sec:.1f}s]")
+
+    def _on_transition_selected(self, trans: TransitionClip):
+        self.canvas.selected_transition = trans
+        self.canvas.selected_text_clip = None
+        self.canvas.selected_image_clip = None
+        self.canvas.selected_video_clip = None
+        self.canvas.selected_shape_clip = None
+        self.canvas.selected_adjustment = None
+        self.clip_selected.emit(trans)
+
+        self.txt_clip_content.setVisible(False)
+        self.spn_font_size.setVisible(False)
+        self.spn_block_speed.setVisible(False)
+        self.spn_start_sec.setVisible(False)
+        self.spn_end_sec.setVisible(False)
+        self.btn_kf_start.setVisible(False)
+        self.btn_kf_end.setVisible(False)
+        self.btn_add_kf_node.setVisible(False)
+
+        if trans:
+            self.lbl_insp_info.setText(f"🎞 Transición: {getattr(trans, 'transition_type', 'Fade')} en {trans.at_sec:.2f}s ({trans.duration:.2f}s dur)")
+
+    def _on_audio_clip_selected(self, ac: TimelineAudioClip):
+        self.canvas.selected_audio_clip = ac
+        self.clip_selected.emit(ac)
+
+        self.txt_clip_content.setVisible(False)
+        self.spn_font_size.setVisible(False)
+        self.spn_block_speed.setVisible(False)
+        self.spn_start_sec.setVisible(True)
+        self.spn_end_sec.setVisible(True)
+        self.btn_kf_start.setVisible(False)
+        self.btn_kf_end.setVisible(False)
+        self.btn_add_kf_node.setVisible(False)
+
+        if ac:
+            self.spn_start_sec.blockSignals(True)
+            self.spn_start_sec.setValue(ac.start_sec)
+            self.spn_start_sec.blockSignals(False)
+
+            self.spn_end_sec.blockSignals(True)
+            self.spn_end_sec.setValue(ac.end_sec)
+            self.spn_end_sec.blockSignals(False)
+
+            import os
+            bname = os.path.basename(getattr(ac, 'audio_path', 'Audio'))
+            self.lbl_insp_info.setText(f"🎵 Audio: {bname} [Vol: {int(getattr(ac, 'volume', 1.0)*100)}%]")
+
+    def select_clip(self, item):
+        """Selecciona programáticamente cualquier tipo de clip desde el preview o árbol de capas."""
+        if item is None:
+            self.canvas.selected_interval = None
+            self.canvas.selected_text_clip = None
+            self.canvas.selected_image_clip = None
+            self.canvas.selected_video_clip = None
+            self.canvas.selected_shape_clip = None
+            self.canvas.selected_adjustment = None
+            self.canvas.selected_transition = None
+            self.canvas.selected_audio_clip = None
+            self.lbl_insp_info.setText("Selecciona un elemento para editar sus propiedades")
+            self.txt_clip_content.setVisible(False)
+            self.spn_font_size.setVisible(False)
+            self.spn_start_sec.setVisible(False)
+            self.spn_end_sec.setVisible(False)
+            self.spn_block_speed.setVisible(False)
+            self.btn_kf_start.setVisible(False)
+            self.btn_kf_end.setVisible(False)
+            self.btn_add_kf_node.setVisible(False)
+            self.canvas.update()
+            return
+
+        if isinstance(item, TimelineTextClip):
+            self._on_text_clip_selected(item)
+        elif isinstance(item, TimelineImageClip):
+            self._on_image_clip_selected(item)
+        elif isinstance(item, TimelineVideoClip):
+            self._on_video_clip_selected(item)
+        elif isinstance(item, TimelineShapeClip):
+            self._on_shape_clip_selected(item)
+        elif isinstance(item, AdjustmentLayer):
+            self._on_adjustment_selected(item)
+        elif isinstance(item, TransitionClip):
+            self._on_transition_selected(item)
+        elif isinstance(item, TimelineAudioClip):
+            self._on_audio_clip_selected(item)
+        elif isinstance(item, SpeedInterval):
+            self._on_interval_selected(item)
+
+        self.canvas.update()
+
+    def sync_inspector(self, item):
+        """Sincroniza valores del inspector en vivo cuando un item se modifica arrastrando en el preview."""
+        if not item:
+            return
+        if hasattr(item, 'start_sec'):
+            self.spn_start_sec.blockSignals(True)
+            self.spn_start_sec.setValue(item.start_sec)
+            self.spn_start_sec.blockSignals(False)
+        if hasattr(item, 'end_sec'):
+            self.spn_end_sec.blockSignals(True)
+            self.spn_end_sec.setValue(item.end_sec)
+            self.spn_end_sec.blockSignals(False)
+        if hasattr(item, 'font_size'):
+            self.spn_font_size.blockSignals(True)
+            self.spn_font_size.setValue(item.font_size)
+            self.spn_font_size.blockSignals(False)
+        self.canvas.update()
+
+    def _on_open_inspector_clicked(self):
+        sel = (
+            self.canvas.selected_text_clip or
+            self.canvas.selected_image_clip or
+            self.canvas.selected_video_clip or
+            self.canvas.selected_shape_clip or
+            self.canvas.selected_adjustment or
+            self.canvas.selected_transition or
+            self.canvas.selected_audio_clip
+        )
+        if not sel:
+            QMessageBox.information(self, "Inspector de Clip", "Selecciona un clip en la línea de tiempo o en el preview para abrir su inspector.")
+            return
+
+        dlg = ClipInspectorDialog(sel, self)
+        if dlg.exec():
+            self.sync_inspector(sel)
+            self.canvas.update()
+            self.timeline_updated.emit()
 
 
 from PyQt6.QtWidgets import QDialog, QFormLayout, QDialogButtonBox
@@ -1461,6 +1669,53 @@ class ClipInspectorDialog(QDialog):
             form_trans.addRow("Color Relleno:", self.btn_fill)
             form_trans.addRow("Color Borde:", self.btn_border)
 
+        elif isinstance(clip, TimelineShapeClip):
+            self.combo_shape_type = QComboBox(tab_trans)
+            self.combo_shape_type.addItems(TimelineShapeClip.SHAPES)
+            s_idx = self.combo_shape_type.findText(getattr(clip, 'shape_type', 'Rectangle'), Qt.MatchFlag.MatchContains)
+            if s_idx >= 0: self.combo_shape_type.setCurrentIndex(s_idx)
+            form_trans.addRow("Tipo de Forma:", self.combo_shape_type)
+
+            self.shape_fill_col = getattr(clip, 'fill_color', '#CBA6F7')
+            self.btn_shape_fill = QPushButton(f"Relleno: {self.shape_fill_col}", tab_trans)
+            self.btn_shape_fill.clicked.connect(self._pick_shape_fill_color)
+
+            self.shape_stroke_col = getattr(clip, 'stroke_color', '#FFFFFF')
+            self.btn_shape_stroke = QPushButton(f"Borde: {self.shape_stroke_col}", tab_trans)
+            self.btn_shape_stroke.clicked.connect(self._pick_shape_stroke_color)
+
+            self.spn_stroke_w = QSpinBox(tab_trans)
+            self.spn_stroke_w.setRange(0, 50)
+            self.spn_stroke_w.setValue(getattr(clip, 'stroke_width', 2))
+            self.spn_stroke_w.setSuffix(" px")
+
+            self.spn_corner_r = QSpinBox(tab_trans)
+            self.spn_corner_r.setRange(0, 100)
+            self.spn_corner_r.setValue(getattr(clip, 'corner_radius', 0))
+            self.spn_corner_r.setSuffix(" px")
+
+            self.spn_star_pts = QSpinBox(tab_trans)
+            self.spn_star_pts.setRange(3, 16)
+            self.spn_star_pts.setValue(getattr(clip, 'star_points', 5))
+
+            self.spn_width_pct = QSpinBox(tab_trans)
+            self.spn_width_pct.setRange(5, 100)
+            self.spn_width_pct.setValue(int(clip.width_ratio * 100))
+            self.spn_width_pct.setSuffix(" %")
+
+            self.spn_height_pct = QSpinBox(tab_trans)
+            self.spn_height_pct.setRange(5, 100)
+            self.spn_height_pct.setValue(int(clip.height_ratio * 100))
+            self.spn_height_pct.setSuffix(" %")
+
+            form_trans.addRow("Color de Relleno:", self.btn_shape_fill)
+            form_trans.addRow("Color del Borde:", self.btn_shape_stroke)
+            form_trans.addRow("Grosor del Borde:", self.spn_stroke_w)
+            form_trans.addRow("Radio de Esquina:", self.spn_corner_r)
+            form_trans.addRow("Puntas de Estrella:", self.spn_star_pts)
+            form_trans.addRow("Ancho (% Pantalla):", self.spn_width_pct)
+            form_trans.addRow("Alto (% Pantalla):", self.spn_height_pct)
+
         elif isinstance(clip, (TimelineImageClip, TimelineVideoClip)):
             self.spn_width_pct = QSpinBox(tab_trans)
             self.spn_width_pct.setRange(5, 100)
@@ -1481,19 +1736,82 @@ class ClipInspectorDialog(QDialog):
                 self.spn_speed.setValue(clip.speed)
                 form_trans.addRow("Velocidad de Vídeo:", self.spn_speed)
 
-        self.spn_rotation = QDoubleSpinBox(tab_trans)
-        self.spn_rotation.setRange(-360.0, 360.0)
-        self.spn_rotation.setSingleStep(5.0)
-        self.spn_rotation.setSuffix("°")
-        self.spn_rotation.setValue(getattr(clip, 'rotation', 0.0))
-        form_trans.addRow("Rotación Angular:", self.spn_rotation)
+                self.spn_slip = QDoubleSpinBox(tab_trans)
+                self.spn_slip.setRange(-3600.0, 3600.0)
+                self.spn_slip.setValue(getattr(clip, 'slip_offset_sec', 0.0))
+                self.spn_slip.setSuffix(" s")
+                form_trans.addRow("Desplazamiento Slip:", self.spn_slip)
 
-        self.combo_easing = QComboBox(tab_trans)
-        self.combo_easing.addItems(["Linear", "Suave Entrada (Ease In)", "Suave Salida (Ease Out)", "Suave Ambos (Ease In-Out)", "Rebote (Bounce)"])
-        cur_easing = getattr(clip, 'easing_curve', 'Linear')
-        e_idx = self.combo_easing.findText(cur_easing, Qt.MatchFlag.MatchContains)
-        if e_idx >= 0: self.combo_easing.setCurrentIndex(e_idx)
-        form_trans.addRow("Curva de Animación:", self.combo_easing)
+        elif isinstance(clip, AdjustmentLayer):
+            self.combo_adj_type = QComboBox(tab_trans)
+            self.combo_adj_type.addItems(AdjustmentLayer.ADJUSTMENT_TYPES)
+            a_idx = self.combo_adj_type.findText(getattr(clip, 'adjustment_type', 'Vignette'), Qt.MatchFlag.MatchContains)
+            if a_idx >= 0: self.combo_adj_type.setCurrentIndex(a_idx)
+            form_trans.addRow("Tipo de Ajuste:", self.combo_adj_type)
+
+            self.spn_intensity = QDoubleSpinBox(tab_trans)
+            self.spn_intensity.setRange(0.0, 1.0)
+            self.spn_intensity.setSingleStep(0.05)
+            self.spn_intensity.setValue(getattr(clip, 'intensity', 1.0))
+            form_trans.addRow("Intensidad:", self.spn_intensity)
+
+            self.spn_vignette = QDoubleSpinBox(tab_trans)
+            self.spn_vignette.setRange(0.0, 1.0)
+            self.spn_vignette.setSingleStep(0.05)
+            self.spn_vignette.setValue(getattr(clip, 'vignette_strength', 0.5))
+            form_trans.addRow("Fuerza Viñeta:", self.spn_vignette)
+
+        elif isinstance(clip, TransitionClip):
+            self.combo_trans_type = QComboBox(tab_trans)
+            self.combo_trans_type.addItems(TransitionClip.TYPES)
+            t_idx = self.combo_trans_type.findText(getattr(clip, 'transition_type', 'Fade'), Qt.MatchFlag.MatchContains)
+            if t_idx >= 0: self.combo_trans_type.setCurrentIndex(t_idx)
+            form_trans.addRow("Tipo de Transición:", self.combo_trans_type)
+
+            self.spn_trans_dur = QDoubleSpinBox(tab_trans)
+            self.spn_trans_dur.setRange(0.1, 5.0)
+            self.spn_trans_dur.setSingleStep(0.1)
+            self.spn_trans_dur.setValue(getattr(clip, 'duration', 0.5))
+            self.spn_trans_dur.setSuffix(" s")
+            form_trans.addRow("Duración Transición:", self.spn_trans_dur)
+
+        elif isinstance(clip, TimelineAudioClip):
+            self.spn_vol = QDoubleSpinBox(tab_trans)
+            self.spn_vol.setRange(0.0, 4.0)
+            self.spn_vol.setSingleStep(0.1)
+            self.spn_vol.setValue(getattr(clip, 'volume', 1.0))
+            form_trans.addRow("Volumen (0-4x):", self.spn_vol)
+
+            self.spn_pan = QDoubleSpinBox(tab_trans)
+            self.spn_pan.setRange(-1.0, 1.0)
+            self.spn_pan.setSingleStep(0.1)
+            self.spn_pan.setValue(getattr(clip, 'pan', 0.0))
+            form_trans.addRow("Balance L/R (-1 a +1):", self.spn_pan)
+
+            self.chk_mute = QCheckBox("Silenciar (Mute)", tab_trans)
+            self.chk_mute.setChecked(getattr(clip, 'muted', False))
+            form_trans.addRow("Estado Audio:", self.chk_mute)
+
+            self.chk_loop = QCheckBox("Bucle (Loop)", tab_trans)
+            self.chk_loop.setChecked(getattr(clip, 'loop', False))
+            form_trans.addRow("Reproducción:", self.chk_loop)
+
+        # Rotación y Curva
+        if hasattr(clip, 'rotation'):
+            self.spn_rotation = QDoubleSpinBox(tab_trans)
+            self.spn_rotation.setRange(-360.0, 360.0)
+            self.spn_rotation.setSingleStep(5.0)
+            self.spn_rotation.setSuffix("°")
+            self.spn_rotation.setValue(getattr(clip, 'rotation', 0.0))
+            form_trans.addRow("Rotación Angular:", self.spn_rotation)
+
+        if hasattr(clip, 'easing_curve'):
+            self.combo_easing = QComboBox(tab_trans)
+            self.combo_easing.addItems(["Linear", "Suave Entrada (Ease In)", "Suave Salida (Ease Out)", "Suave Ambos (Ease In-Out)", "Rebote (Bounce)"])
+            cur_easing = getattr(clip, 'easing_curve', 'Linear')
+            e_idx = self.combo_easing.findText(cur_easing, Qt.MatchFlag.MatchContains)
+            if e_idx >= 0: self.combo_easing.setCurrentIndex(e_idx)
+            form_trans.addRow("Curva de Animación:", self.combo_easing)
 
         tabs.addTab(tab_trans, "📐 Transformación & Tiempo")
 
@@ -1503,123 +1821,116 @@ class ClipInspectorDialog(QDialog):
         form_fx.setSpacing(10)
 
         # Blend Mode
-        self.combo_blend = QComboBox(tab_fx)
-        self.combo_blend.addItems(PhotoshopFX.BLEND_MODES)
-        cur_blend = getattr(clip, 'blend_mode', 'Normal')
-        idx = self.combo_blend.findText(cur_blend, Qt.MatchFlag.MatchContains)
-        if idx >= 0: self.combo_blend.setCurrentIndex(idx)
-        form_fx.addRow("Modo de Fusión (Blend):", self.combo_blend)
+        if hasattr(clip, 'blend_mode'):
+            self.combo_blend = QComboBox(tab_fx)
+            self.combo_blend.addItems(PhotoshopFX.BLEND_MODES)
+            cur_blend = getattr(clip, 'blend_mode', 'Normal')
+            idx = self.combo_blend.findText(cur_blend, Qt.MatchFlag.MatchContains)
+            if idx >= 0: self.combo_blend.setCurrentIndex(idx)
+            form_fx.addRow("Modo de Fusión (Blend):", self.combo_blend)
 
         # Opacity Slider + SpinBox
-        op_hlayout = QHBoxLayout()
-        self.slider_opacity = QSlider(Qt.Orientation.Horizontal, tab_fx)
-        self.slider_opacity.setRange(0, 100)
-        self.slider_opacity.setValue(int(getattr(clip, 'opacity', 1.0) * 100))
-        self.spn_opacity = QSpinBox(tab_fx)
-        self.spn_opacity.setRange(0, 100)
-        self.spn_opacity.setValue(self.slider_opacity.value())
-        self.spn_opacity.setSuffix(" %")
-        self.slider_opacity.valueChanged.connect(self.spn_opacity.setValue)
-        self.spn_opacity.valueChanged.connect(self.slider_opacity.setValue)
-        op_hlayout.addWidget(self.slider_opacity)
-        op_hlayout.addWidget(self.spn_opacity)
-        form_fx.addRow("Opacidad General:", op_hlayout)
+        if hasattr(clip, 'opacity'):
+            op_hlayout = QHBoxLayout()
+            self.slider_opacity = QSlider(Qt.Orientation.Horizontal, tab_fx)
+            self.slider_opacity.setRange(0, 100)
+            self.slider_opacity.setValue(int(getattr(clip, 'opacity', 1.0) * 100))
+            self.spn_opacity = QSpinBox(tab_fx)
+            self.spn_opacity.setRange(0, 100)
+            self.spn_opacity.setValue(self.slider_opacity.value())
+            self.spn_opacity.setSuffix(" %")
+            self.slider_opacity.valueChanged.connect(self.spn_opacity.setValue)
+            self.spn_opacity.valueChanged.connect(self.slider_opacity.setValue)
+            op_hlayout.addWidget(self.slider_opacity)
+            op_hlayout.addWidget(self.spn_opacity)
+            form_fx.addRow("Opacidad General:", op_hlayout)
 
         # Fade In & Fade Out
-        self.spn_fade_in = QDoubleSpinBox(tab_fx)
-        self.spn_fade_in.setRange(0.0, 5.0)
-        self.spn_fade_in.setSingleStep(0.2)
-        self.spn_fade_in.setSuffix(" s")
-        self.spn_fade_in.setValue(getattr(clip, 'fade_in_sec', 0.0))
+        if hasattr(clip, 'fade_in_sec'):
+            self.spn_fade_in = QDoubleSpinBox(tab_fx)
+            self.spn_fade_in.setRange(0.0, 10.0)
+            self.spn_fade_in.setSingleStep(0.2)
+            self.spn_fade_in.setSuffix(" s")
+            self.spn_fade_in.setValue(getattr(clip, 'fade_in_sec', 0.0))
 
-        self.spn_fade_out = QDoubleSpinBox(tab_fx)
-        self.spn_fade_out.setRange(0.0, 5.0)
-        self.spn_fade_out.setSingleStep(0.2)
-        self.spn_fade_out.setSuffix(" s")
-        self.spn_fade_out.setValue(getattr(clip, 'fade_out_sec', 0.0))
+            self.spn_fade_out = QDoubleSpinBox(tab_fx)
+            self.spn_fade_out.setRange(0.0, 10.0)
+            self.spn_fade_out.setSingleStep(0.2)
+            self.spn_fade_out.setSuffix(" s")
+            self.spn_fade_out.setValue(getattr(clip, 'fade_out_sec', 0.0))
 
-        fade_hlayout = QHBoxLayout()
-        fade_hlayout.addWidget(QLabel("Entrada:", tab_fx))
-        fade_hlayout.addWidget(self.spn_fade_in)
-        fade_hlayout.addWidget(QLabel("Salida:", tab_fx))
-        fade_hlayout.addWidget(self.spn_fade_out)
-        form_fx.addRow("Desvanecimiento Suave:", fade_hlayout)
+            fade_hlayout = QHBoxLayout()
+            fade_hlayout.addWidget(QLabel("Entrada:", tab_fx))
+            fade_hlayout.addWidget(self.spn_fade_in)
+            fade_hlayout.addWidget(QLabel("Salida:", tab_fx))
+            fade_hlayout.addWidget(self.spn_fade_out)
+            form_fx.addRow("Fundidos (Fades):", fade_hlayout)
 
-        # Filters / LUTs
-        self.combo_filter = QComboBox(tab_fx)
-        self.combo_filter.addItems(PhotoshopFX.FILTERS)
-        cur_filter = getattr(clip, 'filter_type', 'Normal')
-        f_idx = self.combo_filter.findText(cur_filter, Qt.MatchFlag.MatchContains)
-        if f_idx >= 0: self.combo_filter.setCurrentIndex(f_idx)
-        form_fx.addRow("Filtro de Capa / Tono:", self.combo_filter)
+        # Filters
+        if hasattr(clip, 'filter_type'):
+            self.combo_filter = QComboBox(tab_fx)
+            self.combo_filter.addItems(PhotoshopFX.FILTERS)
+            cur_filter = getattr(clip, 'filter_type', 'Normal')
+            f_idx = self.combo_filter.findText(cur_filter, Qt.MatchFlag.MatchContains)
+            if f_idx >= 0: self.combo_filter.setCurrentIndex(f_idx)
+            form_fx.addRow("Filtro / Tono:", self.combo_filter)
 
         # Brightness & Contrast
-        self.spn_brightness = QDoubleSpinBox(tab_fx)
-        self.spn_brightness.setRange(0.2, 2.5)
-        self.spn_brightness.setSingleStep(0.1)
-        self.spn_brightness.setValue(getattr(clip, 'brightness', 1.0))
+        if hasattr(clip, 'brightness'):
+            self.spn_brightness = QDoubleSpinBox(tab_fx)
+            self.spn_brightness.setRange(0.2, 2.5)
+            self.spn_brightness.setSingleStep(0.1)
+            self.spn_brightness.setValue(getattr(clip, 'brightness', 1.0))
 
-        self.spn_contrast = QDoubleSpinBox(tab_fx)
-        self.spn_contrast.setRange(0.2, 2.5)
-        self.spn_contrast.setSingleStep(0.1)
-        self.spn_contrast.setValue(getattr(clip, 'contrast', 1.0))
+            self.spn_contrast = QDoubleSpinBox(tab_fx)
+            self.spn_contrast.setRange(0.2, 2.5)
+            self.spn_contrast.setSingleStep(0.1)
+            self.spn_contrast.setValue(getattr(clip, 'contrast', 1.0))
 
-        bc_hlayout = QHBoxLayout()
-        bc_hlayout.addWidget(QLabel("Brillo:", tab_fx))
-        bc_hlayout.addWidget(self.spn_brightness)
-        bc_hlayout.addWidget(QLabel("Contraste:", tab_fx))
-        bc_hlayout.addWidget(self.spn_contrast)
-        form_fx.addRow("Ajuste Tonal:", bc_hlayout)
+            bc_hlayout = QHBoxLayout()
+            bc_hlayout.addWidget(QLabel("Brillo:", tab_fx))
+            bc_hlayout.addWidget(self.spn_brightness)
+            bc_hlayout.addWidget(QLabel("Contraste:", tab_fx))
+            bc_hlayout.addWidget(self.spn_contrast)
+            form_fx.addRow("Ajuste Tonal:", bc_hlayout)
 
         # Saturation & Blur
-        self.spn_saturation = QDoubleSpinBox(tab_fx)
-        self.spn_saturation.setRange(0.0, 3.0)
-        self.spn_saturation.setSingleStep(0.1)
-        self.spn_saturation.setValue(getattr(clip, 'saturation', 1.0))
-
-        self.spn_blur = QDoubleSpinBox(tab_fx)
-        self.spn_blur.setRange(0.0, 15.0)
-        self.spn_blur.setSingleStep(0.5)
-        self.spn_blur.setSuffix(" px")
-        self.spn_blur.setValue(getattr(clip, 'blur_radius', 0.0))
-
-        sat_hlayout = QHBoxLayout()
-        sat_hlayout.addWidget(QLabel("Saturación:", tab_fx))
-        sat_hlayout.addWidget(self.spn_saturation)
-        sat_hlayout.addWidget(QLabel("Desenfoque:", tab_fx))
-        sat_hlayout.addWidget(self.spn_blur)
-        form_fx.addRow("Color y Enfoque:", sat_hlayout)
-
-        # Rounded Corners & Border for Images and PIP Video
-        if isinstance(clip, (TimelineImageClip, TimelineVideoClip)):
-            self.spn_radius = QSpinBox(tab_fx)
-            self.spn_radius.setRange(0, 80)
-            self.spn_radius.setValue(getattr(clip, 'border_radius', 0))
-            self.spn_radius.setSuffix(" px")
-
-            self.spn_border_w = QSpinBox(tab_fx)
-            self.spn_border_w.setRange(0, 30)
-            self.spn_border_w.setValue(getattr(clip, 'border_width', 0))
-            self.spn_border_w.setSuffix(" px")
-
-            self.frame_border_col = getattr(clip, 'border_color', '#FFFFFF')
-            self.btn_frame_border = QPushButton(f"Color: {self.frame_border_col}", tab_fx)
-            self.btn_frame_border.clicked.connect(self._pick_frame_border_color)
-
-            corner_hlayout = QHBoxLayout()
-            corner_hlayout.addWidget(QLabel("Radio:", tab_fx))
-            corner_hlayout.addWidget(self.spn_radius)
-            corner_hlayout.addWidget(QLabel("Borde:", tab_fx))
-            corner_hlayout.addWidget(self.spn_border_w)
-            corner_hlayout.addWidget(self.btn_frame_border)
-            form_fx.addRow("Marco y Esquinas:", corner_hlayout)
+        if hasattr(clip, 'blur_radius'):
+            self.spn_blur = QDoubleSpinBox(tab_fx)
+            self.spn_blur.setRange(0.0, 30.0)
+            self.spn_blur.setSingleStep(0.5)
+            self.spn_blur.setSuffix(" px")
+            self.spn_blur.setValue(getattr(clip, 'blur_radius', 0.0))
+            form_fx.addRow("Desenfoque (Blur):", self.spn_blur)
 
         # Drop Shadow
-        self.chk_shadow = QCheckBox("Activar Sombra Paralela (Drop Shadow)", tab_fx)
-        self.chk_shadow.setChecked(getattr(clip, 'drop_shadow', isinstance(clip, TimelineTextClip)))
-        form_fx.addRow("Estilo de Capa:", self.chk_shadow)
+        if hasattr(clip, 'drop_shadow'):
+            self.chk_shadow = QCheckBox("Activar Sombra Paralela (Drop Shadow)", tab_fx)
+            self.chk_shadow.setChecked(getattr(clip, 'drop_shadow', False))
+            form_fx.addRow("Estilo de Capa:", self.chk_shadow)
 
         tabs.addTab(tab_fx, "🎨 Photoshop FX & Estilos")
+
+        # TAB 3: 🎭 Máscara Alfa (para Imágenes, Vídeos PIP y Formas)
+        if hasattr(clip, 'mask_path'):
+            tab_mask = QWidget()
+            form_mask = QFormLayout(tab_mask)
+            form_mask.setSpacing(10)
+
+            self.mask_path_edit = QLineEdit(getattr(clip, 'mask_path', ''), tab_mask)
+            btn_browse_mask = QPushButton("Explorar Máscara...", tab_mask)
+            btn_browse_mask.clicked.connect(self._pick_mask_file)
+
+            mask_row = QHBoxLayout()
+            mask_row.addWidget(self.mask_path_edit)
+            mask_row.addWidget(btn_browse_mask)
+            form_mask.addRow("Archivo de Máscara:", mask_row)
+
+            self.chk_mask_invert = QCheckBox("Invertir Máscara Alfa", tab_mask)
+            self.chk_mask_invert.setChecked(getattr(clip, 'mask_invert', False))
+            form_mask.addRow("Modo:", self.chk_mask_invert)
+
+            tabs.addTab(tab_mask, "🎭 Máscara Alfa")
 
         main_layout.addWidget(tabs)
 
@@ -1632,6 +1943,10 @@ class ClipInspectorDialog(QDialog):
         if isinstance(self.clip, TimelineTextClip): return "Texto / Subtítulo"
         elif isinstance(self.clip, TimelineImageClip): return f"Imagen ({os.path.basename(self.clip.image_path)})"
         elif isinstance(self.clip, TimelineVideoClip): return f"Vídeo PIP ({os.path.basename(self.clip.video_path)})"
+        elif isinstance(self.clip, TimelineShapeClip): return f"Forma ({getattr(self.clip, 'shape_type', 'Forma')})"
+        elif isinstance(self.clip, AdjustmentLayer): return f"Capa de Ajuste ({getattr(self.clip, 'adjustment_type', 'Ajuste')})"
+        elif isinstance(self.clip, TransitionClip): return f"Transición ({getattr(self.clip, 'transition_type', 'Fade')})"
+        elif isinstance(self.clip, TimelineAudioClip): return f"Pista Audio ({os.path.basename(getattr(self.clip, 'audio_path', 'Audio'))})"
         return "Elemento"
 
     def _pick_fill_color(self):
@@ -1646,44 +1961,83 @@ class ClipInspectorDialog(QDialog):
             self.color_border = col.name()
             self.btn_border.setText(f"Borde: {self.color_border}")
 
-    def _pick_frame_border_color(self):
-        col = QColorDialog.getColor(QColor(getattr(self, 'frame_border_col', '#FFFFFF')), self, "Seleccionar Color de Marco")
+    def _pick_shape_fill_color(self):
+        col = QColorDialog.getColor(QColor(self.shape_fill_col), self, "Seleccionar Color de Forma")
         if col.isValid():
-            self.frame_border_col = col.name()
-            self.btn_frame_border.setText(f"Color: {self.frame_border_col}")
+            self.shape_fill_col = col.name()
+            self.btn_shape_fill.setText(f"Relleno: {self.shape_fill_col}")
+
+    def _pick_shape_stroke_color(self):
+        col = QColorDialog.getColor(QColor(self.shape_stroke_col), self, "Seleccionar Color de Trazo")
+        if col.isValid():
+            self.shape_stroke_col = col.name()
+            self.btn_shape_stroke.setText(f"Borde: {self.shape_stroke_col}")
+
+    def _pick_mask_file(self):
+        fp, _ = QFileDialog.getOpenFileName(self, "Seleccionar Imagen para Máscara", "", "Imágenes (*.png *.jpg *.jpeg *.bmp *.webp)")
+        if fp:
+            self.mask_path_edit.setText(fp)
 
     def _save(self):
-        self.clip.start_sec = self.spn_start.value()
-        self.clip.end_sec = max(self.clip.start_sec + 0.1, self.spn_end.value())
-        self.clip.rotation = self.spn_rotation.value()
-        self.clip.easing_curve = self.combo_easing.currentText()
+        if hasattr(self, 'spn_start'): self.clip.start_sec = self.spn_start.value()
+        if hasattr(self, 'spn_end'): self.clip.end_sec = max(self.clip.start_sec + 0.1, self.spn_end.value())
+        if hasattr(self, 'spn_rotation'): self.clip.rotation = self.spn_rotation.value()
+        if hasattr(self, 'combo_easing'): self.clip.easing_curve = self.combo_easing.currentText()
 
-        # Save Tab 1 (Transformation)
+        # Save Specific Types
         if isinstance(self.clip, TimelineTextClip):
             self.clip.text = self.txt_content.text()
             self.clip.font_size = self.spn_font_size.value()
             self.clip.color = self.color_fill
             self.clip.border_color = self.color_border
+
+        elif isinstance(self.clip, TimelineShapeClip):
+            self.clip.shape_type = self.combo_shape_type.currentText()
+            self.clip.fill_color = self.shape_fill_col
+            self.clip.stroke_color = self.shape_stroke_col
+            self.clip.stroke_width = self.spn_stroke_w.value()
+            self.clip.corner_radius = self.spn_corner_r.value()
+            self.clip.star_points = self.spn_star_pts.value()
+            self.clip.width_ratio = self.spn_width_pct.value() / 100.0
+            self.clip.height_ratio = self.spn_height_pct.value() / 100.0
+
         elif isinstance(self.clip, (TimelineImageClip, TimelineVideoClip)):
             self.clip.width_ratio = self.spn_width_pct.value() / 100.0
             self.clip.height_ratio = self.spn_height_pct.value() / 100.0
             if isinstance(self.clip, TimelineVideoClip):
                 self.clip.speed = self.spn_speed.value()
-            if hasattr(self, 'spn_radius'):
-                self.clip.border_radius = self.spn_radius.value()
-                self.clip.border_width = self.spn_border_w.value()
-                self.clip.border_color = getattr(self, 'frame_border_col', '#FFFFFF')
+                if hasattr(self, 'spn_slip'):
+                    self.clip.slip_offset_sec = self.spn_slip.value()
 
-        # Save Tab 2 (Photoshop FX)
-        self.clip.blend_mode = self.combo_blend.currentText()
-        self.clip.opacity = self.spn_opacity.value() / 100.0
-        self.clip.fade_in_sec = self.spn_fade_in.value()
-        self.clip.fade_out_sec = self.spn_fade_out.value()
-        self.clip.filter_type = self.combo_filter.currentText()
-        self.clip.brightness = self.spn_brightness.value()
-        self.clip.contrast = self.spn_contrast.value()
-        self.clip.saturation = self.spn_saturation.value()
-        self.clip.blur_radius = self.spn_blur.value()
-        self.clip.drop_shadow = self.chk_shadow.isChecked()
+        elif isinstance(self.clip, AdjustmentLayer):
+            self.clip.adjustment_type = self.combo_adj_type.currentText()
+            self.clip.intensity = self.spn_intensity.value()
+            self.clip.vignette_strength = self.spn_vignette.value()
+
+        elif isinstance(self.clip, TransitionClip):
+            self.clip.transition_type = self.combo_trans_type.currentText()
+            self.clip.duration = self.spn_trans_dur.value()
+
+        elif isinstance(self.clip, TimelineAudioClip):
+            self.clip.volume = self.spn_vol.value()
+            self.clip.pan = self.spn_pan.value()
+            self.clip.muted = self.chk_mute.isChecked()
+            self.clip.loop = self.chk_loop.isChecked()
+
+        # Save FX Tab
+        if hasattr(self, 'combo_blend'): self.clip.blend_mode = self.combo_blend.currentText()
+        if hasattr(self, 'spn_opacity'): self.clip.opacity = self.spn_opacity.value() / 100.0
+        if hasattr(self, 'spn_fade_in'): self.clip.fade_in_sec = self.spn_fade_in.value()
+        if hasattr(self, 'spn_fade_out'): self.clip.fade_out_sec = self.spn_fade_out.value()
+        if hasattr(self, 'combo_filter'): self.clip.filter_type = self.combo_filter.currentText()
+        if hasattr(self, 'spn_brightness'): self.clip.brightness = self.spn_brightness.value()
+        if hasattr(self, 'spn_contrast'): self.clip.contrast = self.spn_contrast.value()
+        if hasattr(self, 'spn_blur'): self.clip.blur_radius = self.spn_blur.value()
+        if hasattr(self, 'chk_shadow'): self.clip.drop_shadow = self.chk_shadow.isChecked()
+
+        # Save Mask Tab
+        if hasattr(self, 'mask_path_edit'):
+            self.clip.mask_path = self.mask_path_edit.text().strip()
+            self.clip.mask_invert = self.chk_mask_invert.isChecked()
 
         self.accept()
